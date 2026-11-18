@@ -1,0 +1,14 @@
+{
+  "name": "student-project-manager-workspace",
+  "version": "1.0.0",
+  "description": "Plateforme SaaS académique de gestion de projets étudiants, équipes, livrables et notations",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "typecheck:frontend": "cd frontend && npm run typecheck"
+  }
+}
