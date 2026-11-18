@@ -40,7 +40,7 @@ Autres captures : [notation (enseignant)](docs/enseignant-notation.png), [promot
 | Frontend | Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS 4, Radix UI, dnd-kit, tiptap, sonner |
 | Backend | Node.js, Express 5, TypeORM, MySQL 8, JWT + refresh tokens, bcrypt, Swagger |
 | Qualité | `tsc --noEmit` (frontend), build TypeScript (backend), 5 tests natifs Node (backend) |
-| CI | `.github/workflows/verify.yml` (typecheck + builds + tests), `.github/workflows/pages.yml` (build et déploiement de la démo sur GitHub Pages) |
+| CI / déploiement | `.github/workflows/verify.yml` (typecheck + builds + tests au push sur main), `.github/workflows/pages.yml` (build et déploiement de la démo via Actions). La démo en ligne est déployée en mode « deploy from a branch » sur la branche `gh-pages` (gratuit, sans Actions) : voir ci-dessous. |
 
 ## Mode démo statique (GitHub Pages)
 
@@ -54,6 +54,21 @@ Le frontend embarque un **mode démo activé à la construction** (`NEXT_PUBLIC_
 # Générer la démo statique dans frontend/out
 npm --prefix frontend run build:demo
 ```
+
+**Mise à jour de la démo en ligne** (branche `gh-pages`, mode « deploy from a branch », gratuit) :
+
+```powershell
+npm --prefix frontend run build:demo
+git switch --orphan gh-pages
+Copy-Item "frontend\out\*" -Destination . -Recurse -Force
+New-Item -ItemType File -Name .nojekyll -Force | Out-Null
+git add .nojekyll 404.html 404 _next auth deliverables favicon.svg grading index.html index.txt my-deliverables my-grades my-group my-projects projects promotions users
+git commit -m "Mise a jour de la demo statique"
+git push origin gh-pages --force
+git switch main
+```
+
+> Ne jamais ajouter les dossiers `backend/`, `frontend/` ni de fichier `.env*` à la branche `gh-pages` : elle ne contient que l'export statique.
 
 ## Installation locale (mode réel, avec MySQL)
 
