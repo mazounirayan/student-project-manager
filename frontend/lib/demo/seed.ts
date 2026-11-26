@@ -130,9 +130,11 @@ export function buildDemoDb(): DemoDb {
     { id: 4, deliverableId: d2.id, type: "max_size" as const, configuration: JSON.stringify({ maxSizeMB: 50 }), errorMessage: "Archive trop volumineuse (50 Mo maximum)." },
   ]
 
-  const okResults = (configLabel: string) => [
-    { type: "file_presence", configuration: "README.md", passed: true, message: "Fichier README.md présent." },
-    { type: "max_size", configuration: "20 Mo", passed: true, message: configLabel },
+  const readme = JSON.stringify({ fileName: "README.md" })
+  const sizeLimit = (maxSizeMB: number) => JSON.stringify({ maxSizeMB })
+  const d1Results = [
+    { type: "file_presence", configuration: readme, passed: true, message: "Tous les fichiers requis sont présents." },
+    { type: "max_size", configuration: sizeLimit(20), passed: true, message: "Taille du fichier : 4,5 Mo (limite 20 Mo)." },
   ]
 
   const submissions = [
@@ -145,8 +147,9 @@ export function buildDemoDb(): DemoDb {
       submittedAt: iso(-8 * DAY),
       isLate: false,
       penalty: 0,
-      similarityScore: 0.12,
-      validationResults: okResults("Taille : 4,5 Mo (conforme)."),
+      similarityScore: 0.74,
+      similarityMatches: [{ submissionId: 2, finalScore: 0.74, details: "142 lignes identiques sur 191 lignes distinctes." }],
+      validationResults: d1Results,
     },
     {
       id: 2,
@@ -157,12 +160,14 @@ export function buildDemoDb(): DemoDb {
       submittedAt: iso(-6 * DAY),
       isLate: true,
       penalty: 12,
-      similarityScore: 0.31,
-      validationResults: okResults("Taille : 5 Mo (conforme)."),
+      similarityScore: 0.74,
+      similarityMatches: [{ submissionId: 1, finalScore: 0.74, details: "142 lignes identiques sur 191 lignes distinctes." }],
+      validationResults: [d1Results[0], { ...d1Results[1], message: "Taille du fichier : 5,0 Mo (limite 20 Mo)." }],
     },
     {
       // Groupe 3 : pas de rendu pour d1 (aucune soumission).
-      // Groupe 2 a aussi rendu le livrable 2 en avance.
+      // Groupe 2 a aussi rendu le livrable 2 en avance, mais sans README : rendu non conforme.
+      // Un seul rendu : rien à comparer, l’analyse de ressemblance n’a pas été lancée.
       id: 3,
       deliverableId: d2.id,
       groupId: g2.id,
@@ -171,8 +176,10 @@ export function buildDemoDb(): DemoDb {
       submittedAt: iso(-2 * DAY),
       isLate: false,
       penalty: 0,
-      similarityScore: 0.08,
-      validationResults: okResults("Taille : 18 Mo (conforme)."),
+      validationResults: [
+        { type: "file_presence", configuration: readme, passed: false, message: "Le fichier README.md est requis." },
+        { type: "max_size", configuration: sizeLimit(50), passed: true, message: "Taille du fichier : 18,0 Mo (limite 50 Mo)." },
+      ],
     },
   ]
 

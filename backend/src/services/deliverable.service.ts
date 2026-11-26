@@ -118,7 +118,7 @@ export class DeliverableService {
       relations: ['group', 'deliverable'],
       order: { submittedAt: 'ASC' },
     });
-    return list.map(submission => serializeSubmission(submission));
+    return list.map(submission => serializeSubmission(submission, { teacher: true, peers: list }));
   }
 
   async getGroupSubmission(deliverableId: number, groupId: number, teacherId: number) {
@@ -128,7 +128,8 @@ export class DeliverableService {
       relations: ['group', 'deliverable'],
     });
     if (!submission) throw notFound('Aucune soumission pour ce groupe');
-    return serializeSubmission(submission);
+    const peers = await submissions().find({ where: { deliverable: { id: deliverableId } }, relations: ['group'] });
+    return serializeSubmission(submission, { teacher: true, peers });
   }
 
   /** Fichier d'une soumission, réservé à l'enseignant du projet et aux membres du groupe. */
@@ -171,7 +172,7 @@ export class DeliverableService {
       gitUrl: source.gitUrl ?? null,
       submittedAt: now,
       isLate,
-      penalty: isLate ? Math.ceil(lateMs / HOUR_MS) * deliverable.penaltyPerHour : 0,
+      penalty: isLate ? Math.round(Math.ceil(lateMs / HOUR_MS) * deliverable.penaltyPerHour * 100) / 100 : 0,
       validationResults: evaluateRules(deliverable.validationRules, source).rules,
       similarityScore: null,
       similarityMatches: null,
@@ -208,14 +209,22 @@ export class DeliverableService {
       }
     }
 
+    // Un rendu qu'on ne peut pas lire (archive illisible, lien Git) n'a pas de score : « 0 % » dirait à tort qu'il a été vérifié.
+    let analyzed = 0;
     for (const submission of list) {
+      const readable = prints.has(submission.id) || Boolean(submission.gitUrl);
       const top = matches.get(submission.id)!.sort((x, y) => y.finalScore - x.finalScore).slice(0, MAX_MATCHES_PER_SUBMISSION);
-      submission.similarityMatches = top;
-      submission.similarityScore = top[0]?.finalScore ?? 0;
+      submission.similarityMatches = readable ? top : null;
+      submission.similarityScore = readable ? top[0]?.finalScore ?? 0 : null;
+      if (readable) analyzed++;
     }
     await submissions().save(list);
 
-    return { message: 'Analyse de similarité terminée', analyzed: list.length };
+    return {
+      message: `Analyse terminée : ${analyzed} rendu${analyzed > 1 ? 's' : ''} comparé${analyzed > 1 ? 's' : ''}.`,
+      analyzed,
+      skipped: list.length - analyzed,
+    };
   }
 
   async getSimilarity(submissionId: number, teacherId: number) {

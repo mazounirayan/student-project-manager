@@ -6,7 +6,6 @@ import { MainLayout } from "@/components/layout/main-layout"
 import { PageContainer, PageHeader } from "@/components/layout/page"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ArrowLeft, Download, AlertCircle, Calendar, Eye, EyeOff, FileText, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
@@ -21,9 +20,11 @@ import { ProjectGradingOverview } from "@/components/grading/project-grading-ove
 import { CreateGradingGridDialog } from "@/components/grading/CreateGradingGridDialog"
 import { DeliverableGradingPanel } from "@/components/grading/DeliverableGradingPanel"
 import { apiPost, apiPut, downloadFile, errorMessage } from "@/lib/api"
+import type { Deliverable } from "@/lib/deliverables"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { TeacherReportsView } from "@/components/reports/TeacherReportsView"
 import { DefenseGradingPanel } from "@/components/grading/DefenseGradingPanel"
+import { EmptyState } from "@/components/shared/EmptyState"
 import { ErrorState } from "@/components/shared/ErrorState"
 import { DetailSkeleton } from "@/components/shared/Skeletons"
 import { deleteProject, getProjectById, updateProject, type Project, type UpdateProjectPayload } from "@/services/project.service"
@@ -65,10 +66,13 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
   const [defenses, setDefenses] = useState<Defense[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [deliverableDialog, setDeliverableDialog] = useState<{ open: boolean; deliverable: Record<string, any> | null }>({
+  const [deliverableDialog, setDeliverableDialog] = useState<{ open: boolean; deliverable: Deliverable | null }>({
     open: false,
     deliverable: null,
   })
+
+  const [gradingDeliverable, setGradingDeliverable] = useState<string | null>(null)
+  const [scrollToGrading, setScrollToGrading] = useState(false)
 
   const projectId = useRouteProjectId(params.id)
 
@@ -92,9 +96,25 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
 
   // L’onglet ouvert est repris dans l’adresse (#groups), pour partager ou retrouver la page telle quelle.
   useEffect(() => {
-    const fromHash = window.location.hash.slice(1) as TabValue
-    if (TABS.includes(fromHash)) setTab(fromHash)
+    const [fromHash, deliverableId] = window.location.hash.slice(1).split("/")
+    if (TABS.includes(fromHash as TabValue)) setTab(fromHash as TabValue)
+    // #deliverables/12 : ouvre la notation du livrable 12 (lien « Noter » de la page Livrables).
+    if (fromHash === "deliverables" && Number(deliverableId) > 0) {
+      setGradingDeliverable(deliverableId)
+      setScrollToGrading(true)
+    }
   }, [])
+
+  const goToGrading = useCallback((deliverableId: number) => {
+    setGradingDeliverable(String(deliverableId))
+    setScrollToGrading(true)
+  }, [])
+
+  useEffect(() => {
+    if (!scrollToGrading || loading) return
+    document.getElementById("notation-livrables")?.scrollIntoView({ behavior: "smooth", block: "start" })
+    setScrollToGrading(false)
+  }, [scrollToGrading, loading])
 
   const changeTab = useCallback((value: string) => {
     setTab(value as TabValue)
@@ -142,50 +162,6 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
       }
     },
     [projectId, handleRefresh],
-  )
-
-  const handleConstraintAdded = useCallback(
-    async (constraint: { deliverableId?: number; type: string; configuration: string; errorMessage?: string }) => {
-      if (!constraint.deliverableId) return
-
-      let configuration: unknown = constraint.configuration
-
-      switch (constraint.type) {
-        case "max_size": {
-          const sizeMatch = /(\d+(?:[.,]\d+)?)\s*(go|gb|mo|mb)?/i.exec(constraint.configuration)
-          const size = sizeMatch ? Number.parseFloat(sizeMatch[1].replace(",", ".")) : 0
-          configuration = { maxSizeMB: /^g/i.test(sizeMatch?.[2] ?? "") ? size * 1024 : size }
-          break
-        }
-        case "folder_structure":
-        case "file_content":
-        case "file_presence": {
-          try {
-            configuration = JSON.parse(constraint.configuration)
-          } catch (err) {
-            toast.error(errorMessage(err, "La configuration doit être un JSON valide."))
-            return
-          }
-          break
-        }
-        default:
-          configuration = constraint.configuration
-          break
-      }
-
-      try {
-        await apiPost(`/deliverables/${constraint.deliverableId}/rules`, {
-          type: constraint.type,
-          configuration,
-          errorMessage: constraint.errorMessage || null,
-        })
-        await handleRefresh()
-        toast.success("Contrainte ajoutée.")
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Impossible d’ajouter la contrainte.")
-      }
-    },
-    [handleRefresh],
   )
 
   const handlePersistOrder = useCallback(
@@ -290,19 +266,6 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
     else changeTab(action)
   }
 
-  const getDeliverableStatus = (deliverable: { deadline: string }) => {
-    const now = new Date()
-    const deadline = new Date(deliverable.deadline)
-
-    if (now > deadline) {
-      return <Badge variant="destructive">Échue</Badge>
-    } else if (deadline.getTime() - now.getTime() < 7 * 24 * 60 * 60 * 1000) {
-      return <Badge variant="secondary">Échéance proche</Badge>
-    } else {
-      return <Badge variant="default">À venir</Badge>
-    }
-  }
-
   if (loading) {
     return (
       <MainLayout>
@@ -324,7 +287,7 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
     )
   }
 
-  const deliverables = (project.deliverables ?? []) as Array<Record<string, any>>
+  const deliverables = (project.deliverables ?? []) as Deliverable[]
 
   const visible = project.status === "visible"
 
@@ -435,32 +398,46 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
 
           <TabsContent value="deliverables">
             <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <CardTitle>Livrables du projet</CardTitle>
-                      <CardDescription>Configurez et suivez les livrables</CardDescription>
-                    </div>
-                    <Button onClick={() => setDeliverableDialog({ open: true, deliverable: null })}>
-                      <Plus aria-hidden="true" className="mr-2 h-4 w-4" />
-                      Nouveau livrable
-                    </Button>
+              <section className="space-y-4" aria-labelledby="deliverables-title">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <h2 id="deliverables-title" className="text-lg font-semibold">
+                      Livrables du projet
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      Ce que chaque groupe doit rendre, les règles que les rendus doivent respecter, et qui a rendu quoi.
+                    </p>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <DeliverablesList
-                    project={project}
-                    getDeliverableStatus={getDeliverableStatus}
-                    formatDeadline={formatDate}
-                    handleConstraintAdded={handleConstraintAdded}
-                    handleEditDeliverable={(deliverable) => setDeliverableDialog({ open: true, deliverable })}
-                    onChanged={handleRefresh}
-                  />
-                </CardContent>
-              </Card>
+                  <Button onClick={() => setDeliverableDialog({ open: true, deliverable: null })}>
+                    <Plus aria-hidden="true" className="h-4 w-4" />
+                    Nouveau livrable
+                  </Button>
+                </div>
 
-              <Card>
+                {deliverables.length === 0 ? (
+                  <EmptyState
+                    icon={FileText}
+                    title="Aucun livrable pour ce projet"
+                    description="Créez un livrable pour que les groupes puissent déposer leur travail. Vous pourrez y ajouter des règles de conformité, repérer les ressemblances entre rendus et noter."
+                    action={
+                      <Button onClick={() => setDeliverableDialog({ open: true, deliverable: null })}>
+                        <Plus aria-hidden="true" className="h-4 w-4" />
+                        Créer le premier livrable
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <DeliverablesList
+                    groups={groups}
+                    deliverables={deliverables}
+                    onEdit={(deliverable) => setDeliverableDialog({ open: true, deliverable })}
+                    onChanged={handleRefresh}
+                    onGrade={goToGrading}
+                  />
+                )}
+              </section>
+
+              <Card id="notation-livrables" className="scroll-mt-6">
                 <CardHeader>
                   <CardTitle>Notation des livrables</CardTitle>
                   <CardDescription>Évaluez directement les livrables rendus par les groupes</CardDescription>
@@ -475,12 +452,12 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
                       </p>
                     </div>
                   ) : (
-                    <Tabs defaultValue={String(deliverables[0]?.id)} className="space-y-4">
+                    <Tabs value={gradingDeliverable ?? String(deliverables[0]?.id)} onValueChange={setGradingDeliverable} className="space-y-4">
                       <TabsList className="flex w-full flex-wrap">
                         {deliverables.map((d) => (
                           <TabsTrigger key={d.id} value={String(d.id)} className="flex flex-wrap items-center gap-2">
                             <FileText className="h-4 w-4" aria-hidden="true" />
-                            {d.name || d.title}
+                            {d.name}
                           </TabsTrigger>
                         ))}
                       </TabsList>
@@ -500,8 +477,8 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
                                 </span>
                                 <span aria-hidden="true" className="text-muted-foreground">•</span>
                                 <span>
-                                  <strong>{d.submissions?.length || 0}</strong> rendu
-                                  {d.submissions?.length > 1 ? "s" : ""}
+                                  <strong>{d.submissions?.length ?? 0}</strong> rendu
+                                  {(d.submissions?.length ?? 0) > 1 ? "s" : ""}
                                 </span>
                               </div>
                             </AlertDescription>

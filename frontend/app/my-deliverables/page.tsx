@@ -1,40 +1,32 @@
 "use client"
 
-import { projectPath } from "@/lib/routes"
-import { MainLayout } from "@/components/layout/main-layout"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
-import { FileText, Calendar, CheckCircle, Clock, AlertCircle, FolderOpen } from "lucide-react"
+import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
+import { FolderOpen } from "lucide-react"
+import { QuietEmpty } from "@/components/dashboard/parts"
+import { StudentDeliverableCard } from "@/components/deliverables/StudentDeliverableCard"
+import { MainLayout } from "@/components/layout/main-layout"
+import { PageContainer, PageHeader } from "@/components/layout/page"
 import { ProtectedRoute } from "@/components/auth/protected-route"
-import { fetchMyProjects, getProjectById, type Project } from "@/services/project.service"
-import { ErrorState } from "@/components/shared/ErrorState"
 import { EmptyState } from "@/components/shared/EmptyState"
+import { ErrorState } from "@/components/shared/ErrorState"
+import { SectionCard } from "@/components/shared/SectionCard"
 import { CardsSkeleton } from "@/components/shared/Skeletons"
-import { daysUntil, formatDateTime, formatRelativeDay } from "@/lib/format"
-import { SubmitDeliverableDialog } from "@/components/deliverables/submit-deliverable-dialog"
-import { useRouter } from "next/navigation"
+import { StatTile } from "@/components/shared/StatTile"
+import { Button } from "@/components/ui/button"
+import { useAuth } from "@/contexts/auth-context"
+import { errorMessage } from "@/lib/api"
+import { studentAction, type Deliverable } from "@/lib/deliverables"
+import { formatDayMonth, plural } from "@/lib/format"
+import { studentGroupState } from "@/lib/projects"
+import { fetchMyProjects, getProjectById } from "@/services/project.service"
 
-type Submission = {
-  id: number
-  groupId: number
-  fileName?: string | null
-  gitUrl?: string | null
-  submittedAt: string
-  isLate: boolean
-  validationResults?: Array<{ type: string; passed: boolean; message: string }>
+interface MyDeliverable {
+  deliverable: Deliverable
+  projectId: number
+  projectName: string
+  groupId: number | null
 }
-type Deliverable = {
-  id: number
-  name: string
-  description: string
-  type: "archive" | "git_link"
-  deadline: string
-  submissions?: Submission[]
-}
-type MyDeliverable = Deliverable & { projectId: number; projectName: string; groupId: number | null; submission: Submission | null }
 
 export default function MyDeliverablesPage() {
   return (
@@ -44,291 +36,127 @@ export default function MyDeliverablesPage() {
   )
 }
 
+const byDeadline = (a: MyDeliverable, b: MyDeliverable) => new Date(a.deliverable.deadline).getTime() - new Date(b.deliverable.deadline).getTime()
+
 function MyDeliverablesPageContent() {
-  const [deliverables, setDeliverables] = useState<MyDeliverable[]>([])
+  const { user } = useAuth()
+  const studentId = user?.id
+  const [items, setItems] = useState<MyDeliverable[]>([])
+  const [unreadable, setUnreadable] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [reloadKey, setReloadKey] = useState(0)
-  const router = useRouter()
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const userRaw = window.localStorage.getItem("user")
-      const myId = userRaw ? Number(JSON.parse(userRaw)?.id) : null
-
-      const projects: Project[] = await fetchMyProjects()
-      const results: MyDeliverable[] = []
-
-      for (const project of projects) {
-        try {
-          const detail = await getProjectById(project.id)
-          const group = ((detail.groups ?? []) as Array<{ id: number; members?: Array<{ id: number }> }>).find((g) =>
-            Array.isArray(g.members) && g.members.some((m) => m.id === myId)
-          )
-          for (const deliverable of (detail.deliverables ?? []) as Deliverable[]) {
-            const submission =
-              (deliverable.submissions ?? []).find((s) => s.groupId === group?.id) ?? null
-            results.push({
-              ...deliverable,
-              projectId: project.id,
-              projectName: project.name,
-              groupId: group?.id ?? null,
-              submission,
-            })
+  const load = useCallback(
+    async (silent = false) => {
+      if (studentId === undefined) return
+      if (!silent) setLoading(true)
+      setError(null)
+      try {
+        const projects = await fetchMyProjects()
+        const details = await Promise.allSettled(projects.map((project) => getProjectById(project.id)))
+        const collected: MyDeliverable[] = []
+        details.forEach((result, index) => {
+          if (result.status !== "fulfilled") return
+          const project = result.value
+          const { group } = studentGroupState(project, studentId)
+          for (const deliverable of (project.deliverables ?? []) as Deliverable[]) {
+            collected.push({ deliverable, projectId: projects[index].id, projectName: project.name, groupId: group?.id ?? null })
           }
-        } catch {
-          // Un projet illisible ne doit pas bloquer la vue d’ensemble.
-        }
+        })
+        setUnreadable(details.filter((result) => result.status === "rejected").length)
+        setItems(collected.sort(byDeadline))
+      } catch (err) {
+        setError(errorMessage(err, "Impossible de charger vos livrables."))
+      } finally {
+        setLoading(false)
       }
-
-      results.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
-      setDeliverables(results)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible de charger vos livrables.")
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+    },
+    [studentId],
+  )
 
   useEffect(() => {
     load()
-  }, [load, reloadKey])
+  }, [load])
 
-  const pending = deliverables.filter((d) => !d.submission)
-  const submitted = deliverables.filter((d) => d.submission)
+  const hasSubmission = (item: MyDeliverable) => item.groupId !== null && (item.deliverable.submissions ?? []).some((s) => s.groupId === item.groupId)
+  const toHandIn = items.filter((item) => !hasSubmission(item) && studentAction(item.deliverable, null) !== "closed")
+  const closed = items.filter((item) => !hasSubmission(item) && studentAction(item.deliverable, null) === "closed")
+  const handedIn = items.filter(hasSubmission)
+  const next = toHandIn.find((item) => new Date(item.deliverable.deadline).getTime() >= Date.now())
 
-  const getStatusBadge = (deliverable: MyDeliverable) => {
-    if (deliverable.submission) {
-      return deliverable.submission.isLate ? (
-        <Badge variant="destructive" className="flex items-center gap-1">
-          <AlertCircle aria-hidden="true" className="h-3 w-3" />
-          <span>Rendu en retard</span>
-        </Badge>
-      ) : (
-        <Badge variant="default" className="flex items-center gap-1">
-          <CheckCircle aria-hidden="true" className="h-3 w-3" />
-          <span>Rendu</span>
-        </Badge>
-      )
-    }
-    const remaining = daysUntil(deliverable.deadline)
-    if (remaining !== null && remaining < 0) {
-      return (
-        <Badge variant="destructive" className="flex items-center gap-1">
-          <AlertCircle aria-hidden="true" className="h-3 w-3" />
-          <span>En retard</span>
-        </Badge>
-      )
-    }
-    return (
-      <Badge variant="secondary" className="flex items-center gap-1">
-        <Clock aria-hidden="true" className="h-3 w-3" />
-        <span>À rendre</span>
-      </Badge>
-    )
-  }
+  const renderCard = (item: MyDeliverable) => (
+    <StudentDeliverableCard
+      key={`${item.projectId}-${item.deliverable.id}`}
+      deliverable={item.deliverable}
+      groupId={item.groupId}
+      projectId={item.projectId}
+      projectName={item.projectName}
+      onChanged={() => load(true)}
+    />
+  )
 
   return (
     <MainLayout>
-      <div className="p-6">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-foreground">Mes livrables</h1>
-          <p className="text-muted-foreground">Ce que votre groupe doit rendre et ce qu’il a déjà rendu.</p>
-        </div>
+      <PageContainer width="narrow">
+        <PageHeader title="Mes livrables" description="Ce que votre groupe doit rendre, ce qu’il a déjà rendu, et si tout est en règle." />
 
         {loading ? (
-          <CardsSkeleton count={3} />
+          <CardsSkeleton count={2} />
         ) : error ? (
-          <ErrorState message={error} onRetry={load} />
-        ) : deliverables.length === 0 ? (
+          <ErrorState message={error} onRetry={() => load()} />
+        ) : items.length === 0 ? (
           <EmptyState
             icon={FolderOpen}
             title="Aucun livrable pour le moment"
-            description="Les livrables de vos projets apparaîtront ici dès qu’un enseignant en aura défini."
+            description="Les livrables de vos projets apparaîtront ici dès que votre enseignant en aura défini."
+            action={
+              <Button asChild variant="outline">
+                <Link href="/my-projects">Voir mes projets</Link>
+              </Button>
+            }
           />
         ) : (
-          <>
-            <div className="mb-6 grid gap-4 md:grid-cols-3">
-              <Card>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">À rendre</CardTitle>
-                  <Clock aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{pending.length}</div>
-                  <p className="text-xs text-muted-foreground">Livrables en attente</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Rendus</CardTitle>
-                  <CheckCircle aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{submitted.length}</div>
-                  <p className="text-xs text-muted-foreground">Livrables rendus</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Ponctualité</CardTitle>
-                  <FileText aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {submitted.length > 0
-                      ? `${Math.round(((submitted.length - submitted.filter((d) => d.submission!.isLate).length) / submitted.length) * 100)} %`
-                      : "—"}
-                  </div>
-                  <p className="text-xs text-muted-foreground">Rendus à l’heure</p>
-                </CardContent>
-              </Card>
+          <div className="space-y-8">
+            <div className="grid grid-cols-3 gap-3">
+              <StatTile label="À rendre" value={toHandIn.length} emphasis={toHandIn.length > 0} />
+              <StatTile label="Rendus" value={handedIn.length} hint={`sur ${plural(items.length, "livrable")}`} />
+              <StatTile
+                label="Prochaine échéance"
+                value={next ? formatDayMonth(next.deliverable.deadline) : "–"}
+                hint={next ? next.deliverable.name : "aucune à venir"}
+              />
             </div>
 
-            {pending.length > 0 && (
-              <div className="mb-8">
-                <h2 className="mb-4 text-xl font-semibold">À rendre</h2>
-                <div className="grid gap-4">
-                  {pending.map((deliverable) => {
-                    const remaining = daysUntil(deliverable.deadline)
-                    const isUrgent = remaining !== null && remaining <= 3
-
-                    return (
-                      <Card key={`${deliverable.projectId}-${deliverable.id}`} className={isUrgent ? "border-destructive" : ""}>
-                        <CardHeader>
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="space-y-1">
-                              <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
-                                <FileText aria-hidden="true" className="h-5 w-5" />
-                                <span>{deliverable.name}</span>
-                              </CardTitle>
-                              <CardDescription>{deliverable.projectName}</CardDescription>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              {getStatusBadge(deliverable)}
-                              {isUrgent && <Badge variant="destructive">Urgent</Badge>}
-                            </div>
-                          </div>
-                          <p className="text-sm text-muted-foreground">{deliverable.description}</p>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Calendar aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                              <span className="text-sm">Échéance : {formatDateTime(deliverable.deadline)}</span>
-                            </div>
-                            <span className={`text-sm font-medium ${isUrgent ? "text-destructive" : "text-muted-foreground"}`}>
-                              {remaining !== null && remaining >= 0
-                                ? formatRelativeDay(deliverable.deadline)
-                                : "échéance dépassée"}
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {deliverable.groupId ? (
-                              <SubmitDeliverableDialog
-                                deliverableId={deliverable.id}
-                                groupId={deliverable.groupId}
-                                onSubmitted={() => setReloadKey((k) => k + 1)}
-                              />
-                            ) : (
-                              <Button variant="outline" onClick={() => router.push(projectPath("/my-projects", deliverable.projectId))}>
-                                Rejoindre d’abord un groupe
-                              </Button>
-                            )}
-                            <Button variant="outline" onClick={() => router.push(projectPath("/my-projects", deliverable.projectId, "/group"))}>
-                              Voir le projet
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )
-                  })}
-                </div>
-              </div>
+            {unreadable > 0 && (
+              <p role="status" className="text-sm text-muted-foreground">
+                Certains projets n’ont pas pu être chargés : leurs livrables manquent ici. Rechargez la page pour réessayer.
+              </p>
             )}
 
-            <div>
-              <h2 className="mb-4 text-xl font-semibold">Historique</h2>
-              {submitted.length === 0 ? (
-                <EmptyState
-                  icon={FileText}
-                  title="Aucun livrable rendu pour l’instant"
-                  description="Vos rendus apparaîtront ici."
-                />
+            <SectionCard title="À rendre" description="Du plus proche au plus lointain.">
+              {toHandIn.length === 0 ? (
+                <QuietEmpty done>Rien à rendre pour le moment.</QuietEmpty>
               ) : (
-                <div className="grid gap-4">
-                  {submitted.map((deliverable) => (
-                    <Card key={`${deliverable.projectId}-${deliverable.id}`}>
-                      <CardHeader>
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="space-y-1">
-                            <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
-                              <FileText aria-hidden="true" className="h-5 w-5" />
-                              <span>{deliverable.name}</span>
-                            </CardTitle>
-                            <CardDescription>{deliverable.projectName}</CardDescription>
-                          </div>
-                          {getStatusBadge(deliverable)}
-                        </div>
-                        <p className="text-sm text-muted-foreground">{deliverable.description}</p>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Calendar aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                            <span>Échéance : {formatDateTime(deliverable.deadline)}</span>
-                          </div>
-                          <span className="text-muted-foreground">
-                            Rendu le {formatDateTime(deliverable.submission!.submittedAt)}
-                          </span>
-                        </div>
-
-                        {deliverable.type === "archive" && deliverable.submission!.fileName && (
-                          <p className="text-sm text-muted-foreground">Fichier : {deliverable.submission!.fileName}</p>
-                        )}
-                        {deliverable.type === "git_link" && deliverable.submission!.gitUrl && (
-                          <p className="text-sm text-muted-foreground">
-                            Lien :{" "}
-                            <a
-                              href={deliverable.submission!.gitUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-primary hover:underline"
-                            >
-                              {deliverable.submission!.gitUrl}
-                            </a>
-                          </p>
-                        )}
-
-                        {deliverable.submission!.validationResults &&
-                          deliverable.submission!.validationResults.length > 0 && (
-                            <Progress
-                              value={
-                                (deliverable.submission!.validationResults.filter((r) => r.passed).length /
-                                  deliverable.submission!.validationResults.length) *
-                                100
-                              }
-                              className="h-2"
-                              aria-label="Règles respectées"
-                            />
-                          )}
-
-                        <div>
-                          <Button variant="outline" size="sm" onClick={() => router.push(projectPath("/my-projects", deliverable.projectId, "/group"))}>
-                            Voir le projet
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
+                <div className="space-y-4">{toHandIn.map(renderCard)}</div>
               )}
-            </div>
-          </>
+            </SectionCard>
+
+            {closed.length > 0 && (
+              <SectionCard title="Dépôt fermé" description="L’échéance est passée et les rendus en retard ne sont pas acceptés.">
+                <div className="space-y-4">{closed.map(renderCard)}</div>
+              </SectionCard>
+            )}
+
+            <SectionCard title="Déjà rendus" description="Votre accusé de réception : l’heure, le retard éventuel et le résultat des règles.">
+              {handedIn.length === 0 ? (
+                <QuietEmpty>Aucun rendu pour l’instant : vos rendus apparaîtront ici.</QuietEmpty>
+              ) : (
+                <div className="space-y-4">{handedIn.map(renderCard)}</div>
+              )}
+            </SectionCard>
+          </div>
         )}
-      </div>
+      </PageContainer>
     </MainLayout>
   )
 }

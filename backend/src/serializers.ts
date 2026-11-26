@@ -3,12 +3,19 @@ import {
   GradingGrid, Group, Report, ReportConfig, ReportSection, ReportSectionConfig,
 } from './entities/Entities';
 
-/** Les chemins serveur des fichiers ne quittent jamais l'API. */
-export function serializeSubmission(submission: DeliverableSubmission, groupId = submission.group?.id) {
+/**
+ * Les chemins serveur des fichiers ne quittent jamais l'API.
+ * La ressemblance entre rendus n'est exposée qu'à l'enseignant : `peers` sert à nommer les groupes comparés.
+ */
+export function serializeSubmission(
+  submission: DeliverableSubmission,
+  view: { teacher?: boolean; peers?: DeliverableSubmission[] } = {},
+) {
+  const peers = view.peers ?? [];
   return {
     id: submission.id,
     deliverableId: submission.deliverable?.id,
-    groupId,
+    groupId: submission.group?.id,
     group: submission.group ? { id: submission.group.id, name: submission.group.name } : null,
     fileName: submission.fileName ?? null,
     fileSize: submission.fileSize ?? null,
@@ -16,8 +23,20 @@ export function serializeSubmission(submission: DeliverableSubmission, groupId =
     submittedAt: submission.submittedAt,
     isLate: submission.isLate,
     penalty: submission.penalty,
-    similarityScore: submission.similarityScore ?? null,
     validationResults: submission.validationResults ?? [],
+    ...(view.teacher && {
+      similarityScore: submission.similarityScore ?? null,
+      similarTo: (submission.similarityMatches ?? []).map(match => {
+        const other = peers.find(peer => peer.id === match.submissionId);
+        return {
+          submissionId: match.submissionId,
+          groupId: other?.group?.id ?? null,
+          groupName: other?.group?.name ?? null,
+          score: match.finalScore,
+          details: match.details,
+        };
+      }),
+    }),
   };
 }
 
@@ -31,7 +50,11 @@ export function serializeRule(rule: DeliverableRule) {
   };
 }
 
-export function serializeDeliverable(deliverable: Deliverable, submissions: DeliverableSubmission[] = deliverable.submissions ?? []) {
+export function serializeDeliverable(
+  deliverable: Deliverable,
+  submissions: DeliverableSubmission[] = deliverable.submissions ?? [],
+  forTeacher = false,
+) {
   return {
     id: deliverable.id,
     projectId: deliverable.project?.id,
@@ -42,7 +65,7 @@ export function serializeDeliverable(deliverable: Deliverable, submissions: Deli
     allowLateSubmission: deliverable.allowLateSubmission,
     penaltyPerHour: deliverable.penaltyPerHour,
     validationRules: (deliverable.validationRules ?? []).map(serializeRule),
-    submissions: submissions.map(submission => serializeSubmission(submission)),
+    submissions: submissions.map(submission => serializeSubmission(submission, { teacher: forTeacher, peers: submissions })),
     createdAt: deliverable.createdAt,
     updatedAt: deliverable.updatedAt,
   };

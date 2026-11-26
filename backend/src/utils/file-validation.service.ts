@@ -30,9 +30,8 @@ function checkMaxSize(config: Record<string, any>, input: SubmissionInput): Outc
   const maxMB = Number(config.maxSizeMB);
   if (!Number.isFinite(maxMB) || maxMB <= 0) return { passed: true, message: 'Limite de taille non configurée.' };
   const sizeMB = fs.statSync(input.filePath).size / (1024 * 1024);
-  return sizeMB <= maxMB
-    ? { passed: true, message: `Taille du fichier : ${sizeMB.toFixed(1)} Mo (limite ${maxMB} Mo).` }
-    : { passed: false, message: `Taille du fichier : ${sizeMB.toFixed(1)} Mo (limite ${maxMB} Mo).` };
+  const message = `Taille du fichier : ${sizeMB.toFixed(1).replace('.', ',')} Mo (limite ${maxMB} Mo).`;
+  return { passed: sizeMB <= maxMB, message };
 }
 
 function checkArchive(input: SubmissionInput, inspect: (archive: NonNullable<ReturnType<typeof openArchive>>) => Outcome): Outcome {

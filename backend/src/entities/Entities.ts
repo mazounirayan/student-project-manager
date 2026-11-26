@@ -208,7 +208,8 @@ export class Deliverable {
   @Column({ default: false })
   allowLateSubmission!: boolean;
 
-  @Column({ type: 'int', default: 0 })
+  /** Points retirés par heure de retard (décimales autorisées : 0,5 point par heure). */
+  @Column({ type: 'float', default: 0 })
   penaltyPerHour!: number;
 
   @CreateDateColumn()
@@ -287,7 +288,7 @@ export class DeliverableSubmission {
   @Column({ default: false })
   isLate!: boolean;
 
-  @Column({ type: 'int', default: 0 })
+  @Column({ type: 'float', default: 0 })
   penalty!: number;
 
   @Column({ type: 'json', nullable: true })

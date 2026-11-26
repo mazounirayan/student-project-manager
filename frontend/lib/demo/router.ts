@@ -4,7 +4,7 @@
  */
 import { DEMO_ACCOUNTS } from "./mode"
 import { loadDemoDb, nextId, persist } from "./store"
-import { serializeSession, serializeGrid, serializeGroup, serializeProjectDetail, serializeProjectSummary, serializeUser } from "./serialize"
+import { serializeSession, serializeGrid, serializeGroup, serializeProjectDetail, serializeProjectSummary, serializeSubmission, serializeUser } from "./serialize"
 import { parseCsv, parseJson } from "../student-import"
 import type { DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoPromotion, DemoReport, DemoSession, DemoUser } from "./types"
 
@@ -156,69 +156,42 @@ function formDataGitUrl(form: FormData): string | null {
   return typeof url === "string" && url.trim() ? url.trim() : null
 }
 
-function filePresenceResult(file: File | null, gitUrl: string | null, ruleConfig: string): { passed: boolean; message: string; configuration: string } {
+const NOT_AN_ARCHIVE = "Archive illisible : seuls les fichiers ZIP peuvent être inspectés."
+
+function maxSizeResult(file: File | null, gitUrl: string | null, configuration: string) {
+  let maxMB = 50
   try {
-    const config = JSON.parse(ruleConfig)
-    const required = config.fileName ?? "README.md"
-    if (file) {
-      return {
-        passed: true,
-        configuration: required,
-        message: `Fichier fourni : ${file.name}. Le contenu de l’archive n’est pas vérifié en démo.`,
-      }
-    }
-    if (gitUrl) {
-      return {
-        passed: true,
-        configuration: required,
-        message: "Lien Git fourni. Le contenu du dépôt n’est pas vérifié en démo.",
-      }
-    }
-    return { passed: false, configuration: required, message: "Aucun fichier fourni." }
+    maxMB = Number(JSON.parse(configuration).maxSizeMB) || 50
   } catch {
-    return { passed: true, configuration: "", message: "Règle ignorée en démo." }
+    // configuration illisible : limite par défaut
   }
+  if (gitUrl) return { passed: true, message: "Lien Git : aucune limite de taille." }
+  if (!file) return { passed: false, message: "Aucun fichier fourni." }
+  const sizeMB = file.size / (1024 * 1024)
+  return { passed: sizeMB <= maxMB, message: `Taille du fichier : ${sizeMB.toFixed(1).replace(".", ",")} Mo (limite ${maxMB} Mo).` }
 }
 
-function maxSizeResult(file: File | null, gitUrl: string | null, ruleConfig: string): { passed: boolean; message: string; configuration: string } {
-  try {
-    const config = JSON.parse(ruleConfig)
-    const maxMB = config.maxSizeMB ?? 50
-    const label = `${maxMB} Mo`
-    if (file) {
-      const sizeMB = file.size / (1024 * 1024)
-      return {
-        passed: sizeMB <= maxMB,
-        configuration: label,
-        message: sizeMB <= maxMB ? `Taille du fichier : ${sizeMB.toFixed(1)} Mo (conforme).` : `Taille du fichier : ${sizeMB.toFixed(1)} Mo (limite ${maxMB} Mo).`,
-      }
-    }
-    if (gitUrl) return { passed: true, configuration: label, message: "Lien Git : aucune limite de taille en démo." }
-    return { passed: false, configuration: label, message: "Aucun fichier fourni." }
-  } catch {
-    return { passed: true, configuration: "", message: "Règle ignorée en démo." }
-  }
+/** Contenu d’archive : la démo ne lit pas les ZIP, elle le dit et ne vérifie que ce qu’elle peut (présence d’un ZIP). */
+function archiveResult(file: File | null, gitUrl: string | null) {
+  if (gitUrl) return { passed: true, message: "Contenu non vérifié pour un lien Git." }
+  if (!file) return { passed: false, message: "Aucun fichier fourni." }
+  if (!/\.zip$/i.test(file.name)) return { passed: false, message: NOT_AN_ARCHIVE }
+  return { passed: true, message: "Archive ZIP reçue. Son contenu n’est pas inspecté dans la démo." }
 }
 
-/** Évalue les règles d’un livrable sur un fichier/lien fourni (simulation transparente). */
+/** Évalue les règles d’un livrable sur un fichier ou un lien fourni, avec le même format de réponse que l’API. */
 function evaluateRules(db: DemoDb, deliverableId: number, file: File | null, gitUrl: string | null) {
-  const rules = db.rules.filter((r) => r.deliverableId === deliverableId)
-  const results = rules.map((rule) => {
-    if (rule.type === "file_presence") {
-      const r = filePresenceResult(file, gitUrl, rule.configuration)
-      return { type: rule.type, ...r }
-    }
-    if (rule.type === "max_size") {
-      const r = maxSizeResult(file, gitUrl, rule.configuration)
-      return { type: rule.type, ...r }
-    }
-    return {
-      type: rule.type,
-      configuration: rule.configuration,
-      passed: true,
-      message: "Règle non exécutable en démo : considérée comme respectée.",
-    }
-  })
+  const results = db.rules
+    .filter((r) => r.deliverableId === deliverableId)
+    .map((rule) => {
+      const outcome = rule.type === "max_size" ? maxSizeResult(file, gitUrl, rule.configuration) : archiveResult(file, gitUrl)
+      return {
+        type: rule.type,
+        configuration: rule.configuration,
+        passed: outcome.passed,
+        message: !outcome.passed && rule.errorMessage ? rule.errorMessage : outcome.message,
+      }
+    })
   return { allPassed: results.every((r) => r.passed), rules: results }
 }
 
@@ -901,8 +874,10 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       if (late && !deliverable.allowLateSubmission) return fail(403, "La date limite est dépassée et les rendus tardifs ne sont pas autorisés.")
 
       const validation = evaluateRules(db, deliverable.id, file, gitUrl)
+      const hoursLate = Math.ceil((now.getTime() - new Date(deliverable.deadline).getTime()) / 3_600_000)
+      // Un nouveau rendu remplace le précédent du groupe, comme dans l’API ; son analyse de ressemblance est à refaire.
       const submission = {
-        id: nextId(db),
+        id: db.submissions.find((s) => s.deliverableId === deliverable.id && s.groupId === group.id)?.id ?? nextId(db),
         deliverableId: deliverable.id,
         groupId: group.id,
         fileName: file?.name ?? undefined,
@@ -910,23 +885,15 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
         gitUrl: gitUrl ?? undefined,
         submittedAt: now.toISOString(),
         isLate: late,
-        penalty: late ? Math.round((now.getTime() - new Date(deliverable.deadline).getTime()) / 3_600_000) * deliverable.penaltyPerHour : 0,
-        similarityScore: 0,
+        penalty: late ? Math.round(hoursLate * deliverable.penaltyPerHour * 100) / 100 : 0,
         validationResults: validation.rules,
       }
-      db.submissions.push(submission)
+      db.submissions = [
+        ...db.submissions.filter((s) => !(s.deliverableId === deliverable.id && s.groupId === group.id)),
+        submission,
+      ]
       persist()
-      return json({
-        id: submission.id,
-        deliverableId: submission.deliverableId,
-        group: { id: group.id, name: group.name },
-        fileName: submission.fileName ?? null,
-        gitUrl: submission.gitUrl ?? null,
-        submittedAt: submission.submittedAt,
-        isLate: submission.isLate,
-        penalty: submission.penalty,
-        validationResults: submission.validationResults,
-      }, 201)
+      return json(serializeSubmission(db, submission), 201)
     }
     m = /^\/deliverables\/(\d+)\/submissions\/(\d+)$/.exec(route)
     if (m && method === "GET") {
@@ -934,29 +901,15 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       assertOwnsDeliverable(db, owner, Number(m![1]))
       const submission = db.submissions.find((s) => s.deliverableId === Number(m![1]) && s.groupId === Number(m![2]))
       if (!submission) return fail(404, "Aucune soumission pour ce groupe.")
-      const group = db.groups.find((g) => g.id === submission.groupId)
-      return json({
-        id: submission.id,
-        deliverableId: submission.deliverableId,
-        groupId: submission.groupId,
-        group: group ? { id: group.id, name: group.name } : null,
-        fileName: submission.fileName ?? null,
-        fileSize: submission.fileSize ?? null,
-        gitUrl: submission.gitUrl ?? null,
-        submittedAt: submission.submittedAt,
-        isLate: submission.isLate,
-        penalty: submission.penalty,
-        similarityScore: submission.similarityScore ?? null,
-        validationResults: submission.validationResults ?? [],
-      })
+      return json(serializeSubmission(db, submission, true))
     }
     m = /^\/deliverables\/(\d+)\/analyze-similarity$/.exec(route)
     if (m && method === "POST") {
       const owner = requireTeacher(db, init, headers)
       assertOwnsDeliverable(db, owner, Number(m![1]))
       const submissions = db.submissions.filter((s) => s.deliverableId === Number(m![1]))
-      // Scores déjà présents dans les données de démo ; l’analyse ne les modifie pas.
-      return json({ message: "Analyse de similarité simulée en démo (scores inchangés).", analyzed: submissions.length })
+      // La démo ne lit pas les fichiers : les scores d’exemple restent tels quels.
+      return json({ message: "Démo : les rendus ne sont pas lus, les scores d’exemple restent inchangés.", analyzed: submissions.length, skipped: 0 })
     }
     m = /^\/deliverables\/submissions\/(\d+)\/download$/.exec(route)
     if (m && method === "GET") {

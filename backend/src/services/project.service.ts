@@ -139,7 +139,7 @@ export class ProjectService {
       teacher: project.teacher,
       groups: project.groups.map(serializeGroup),
       deliverables: project.deliverables.map(deliverable =>
-        serializeDeliverable(deliverable, visibleToActor(deliverable.submissions))),
+        serializeDeliverable(deliverable, visibleToActor(deliverable.submissions), actor.role === 'teacher')),
       reports: visibleToActor(project.reports).map(serializeReport),
       defenses: [...project.defenses].sort((a, b) => a.orderIndex - b.orderIndex).map(serializeDefense),
       gradingGrids: actor.role === 'teacher' ? project.gradingGrids.map(serializeGrid) : undefined,

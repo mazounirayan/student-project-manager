@@ -112,7 +112,7 @@ export const validateDeliverable = (partial: boolean) => {
     field('deadline').isISO8601().withMessage('Date limite invalide'),
     partial ? body('projectId').optional() : body('projectId').isInt({ min: 1 }).withMessage('Projet invalide'),
     body('allowLateSubmission').optional().isBoolean().withMessage('"allowLateSubmission" doit être un booléen'),
-    body('penaltyPerHour').optional().isInt({ min: 0 }).withMessage('Pénalité par heure invalide'),
+    body('penaltyPerHour').optional().isFloat({ min: 0 }).withMessage('Pénalité par heure invalide'),
     handleValidationErrors,
   ];
 };

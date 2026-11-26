@@ -1,316 +1,205 @@
 "use client"
 
 import { useState } from "react"
-import { Calendar, ChevronDown, ChevronUp, Clock, Download, Edit, Eye, FileText, Sparkles, Trash2 } from "lucide-react"
+import { Loader2, MoreHorizontal, Pencil, Trash2, X } from "lucide-react"
 import { toast } from "sonner"
-import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
-import { DeliverableConstraintDialog } from "@/components/projects/deliverable-constraint-dialog"
+import { QuietEmpty } from "@/components/dashboard/parts"
+import { SubmissionDetailsDialog } from "@/components/deliverables/DeliverableGroupDetails"
 import { DeliverableStats } from "@/components/deliverables/DeliverableStats"
-import { SubmissionStatus } from "@/components/deliverables/SubmissionStatus"
-import { DeliverableGroupDetails } from "@/components/deliverables/DeliverableGroupDetails"
-import { apiDelete, apiPost, downloadFile, errorMessage } from "@/lib/api"
+import { SubmissionList } from "@/components/deliverables/SubmissionList"
+import { DeliverableConstraintDialog, type NewRule } from "@/components/projects/deliverable-constraint-dialog"
+import { DueBadge } from "@/components/shared/DueBadge"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { apiDelete, apiPost, errorMessage } from "@/lib/api"
 import { confirmAction } from "@/lib/dialogs"
-import { formatPercent, formatDecimal } from "@/lib/format"
-
-const RULE_LABELS: Record<string, string> = {
-  max_size: "Taille maximale",
-  file_format: "Format de fichier",
-  file_presence: "Fichier requis",
-  folder_structure: "Structure de dossiers",
-  file_content: "Contenu de fichier",
-}
-
-function describeRule(rule: { type: string; configuration?: string }) {
-  let detail = rule.configuration ?? ""
-  try {
-    const config = JSON.parse(detail)
-    if (typeof config === "object" && config !== null) {
-      detail = "maxSizeMB" in config ? `${config.maxSizeMB} Mo` : Object.values(config).join(", ")
-    }
-  } catch {
-    // configuration en texte libre : affichée telle quelle
-  }
-  const label = RULE_LABELS[rule.type] ?? rule.type
-  return detail ? `${label} (${detail})` : label
-}
+import { describeRule, latePolicy, type Deliverable, type GroupRef, type GroupRow } from "@/lib/deliverables"
+import { formatDateFull, formatTime, plural } from "@/lib/format"
 
 interface DeliverablesListProps {
-  project: any
-  getDeliverableStatus: (deliverable: any) => JSX.Element
-  formatDeadline: (deadline: string) => string
-  handleConstraintAdded: (constraint: any) => void
-  handleEditDeliverable: (deliverable: any) => void
-  onChanged: () => void
+  groups: GroupRef[]
+  deliverables: Deliverable[]
+  onEdit: (deliverable: Deliverable) => void
+  /** Recharge le projet après une modification. */
+  onChanged: () => Promise<void> | void
+  /** Passe à la notation du livrable, plus bas dans la page. */
+  onGrade: (deliverableId: number) => void
 }
 
-function SimilarityBar({ ratio }: { ratio: number }) {
-  const percent = Math.min(Math.max(ratio * 100, 0), 100)
-  const color = percent >= 70 ? "bg-red-500" : percent >= 40 ? "bg-yellow-500" : "bg-green-500"
-  return (
-    <div className="h-2 w-full rounded bg-muted" role="presentation">
-      <div className={`${color} h-2 rounded`} style={{ width: `${percent}%` }} />
-    </div>
-  )
-}
+/** Livrables du projet : consigne et échéance, règles de conformité, rendus par groupe avec leur détail et leur notation. */
+export function DeliverablesList({ groups, deliverables, onEdit, onChanged, onGrade }: DeliverablesListProps) {
+  const [details, setDetails] = useState<{ deliverable: Deliverable; row: GroupRow } | null>(null)
+  const [analysing, setAnalysing] = useState<number | null>(null)
 
-export function DeliverablesList({
-  project,
-  getDeliverableStatus,
-  formatDeadline,
-  handleConstraintAdded,
-  handleEditDeliverable,
-  onChanged,
-}: DeliverablesListProps) {
-  const [openDrops, setOpenDrops] = useState<Set<number>>(new Set())
-  const [selected, setSelected] = useState<{ submission: any; deliverableId: number } | null>(null)
-
-  const toggleDrop = (deliverableId: number) =>
-    setOpenDrops((prev) => {
-      const next = new Set(prev)
-      if (!next.delete(deliverableId)) next.add(deliverableId)
-      return next
-    })
-
-  const handleDownload = async (submission: any) => {
+  const addRule = async (deliverable: Deliverable, rule: NewRule) => {
     try {
-      await downloadFile(`/deliverables/submissions/${submission.id}/download`, `rendu-${submission.group?.name ?? submission.id}`)
+      await apiPost(`/deliverables/${deliverable.id}/rules`, rule)
+      toast.success("Règle ajoutée.", { description: "Elle s’applique aux prochains rendus. Ceux déjà déposés ne sont pas revérifiés." })
+      await onChanged()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Téléchargement impossible.")
+      toast.error("La règle n’a pas été ajoutée.", { description: errorMessage(err, "Réessayez dans un instant.") })
+      throw err
     }
   }
 
-  const analyseSimilarity = async (deliverableId: number) => {
-    try {
-      await apiPost(`/deliverables/${deliverableId}/analyze-similarity`)
-      toast.success("Analyse de similarité terminée.")
-      onChanged()
-    } catch (err) {
-      toast.error(errorMessage(err, "L’analyse de similarité a échoué."))
-    }
-  }
-
-  const handleDeleteDeliverable = async (deliverableId: number) => {
+  const removeRule = async (deliverable: Deliverable, ruleId: number, label: string) => {
     const confirmed = await confirmAction({
-      title: "Supprimer ce livrable ?",
-      description: "Les rendus associés seront supprimés. Cette action est irréversible.",
-      confirmText: "Supprimer",
+      title: "Retirer cette règle ?",
+      description: `« ${label} » ne sera plus vérifiée. Les rendus déjà déposés gardent leur résultat de vérification.`,
+      confirmText: "Retirer la règle",
+    })
+    if (!confirmed) return
+    try {
+      await apiDelete(`/deliverables/${deliverable.id}/rules/${ruleId}`)
+      toast.success("Règle retirée.")
+      await onChanged()
+    } catch (err) {
+      toast.error("La règle n’a pas été retirée.", { description: errorMessage(err, "Réessayez dans un instant.") })
+    }
+  }
+
+  const analyse = async (deliverable: Deliverable) => {
+    setAnalysing(deliverable.id)
+    try {
+      const result = await apiPost<{ message?: string }>(`/deliverables/${deliverable.id}/analyze-similarity`)
+      toast.success(result?.message ?? "Analyse terminée.")
+      await onChanged()
+    } catch (err) {
+      toast.error("L’analyse n’a pas pu se faire.", { description: errorMessage(err, "Réessayez dans un instant.") })
+    } finally {
+      setAnalysing(null)
+    }
+  }
+
+  const remove = async (deliverable: Deliverable) => {
+    const count = deliverable.submissions?.length ?? 0
+    const confirmed = await confirmAction({
+      title: `Supprimer « ${deliverable.name} » ?`,
+      description: `${count > 0 ? `${plural(count, "rendu")} déposé${count > 1 ? "s" : ""} par les groupes ser${count > 1 ? "ont" : "a"} supprimé${count > 1 ? "s" : ""} avec lui. ` : ""}Cette action est irréversible.`,
+      confirmText: "Supprimer le livrable",
       destructive: true,
     })
     if (!confirmed) return
     try {
-      await apiDelete(`/deliverables/${deliverableId}`)
+      await apiDelete(`/deliverables/${deliverable.id}`)
       toast.success("Livrable supprimé.")
-      onChanged()
+      await onChanged()
     } catch (err) {
-      toast.error(errorMessage(err, "La suppression a échoué."))
+      toast.error("Le livrable n’a pas été supprimé.", { description: errorMessage(err, "Réessayez dans un instant.") })
     }
   }
 
-    return (
-        <div className="space-y-4">
-            {project?.deliverables?.map((deliverable: any) => {
-                const isOpen = openDrops.has(deliverable.id)
-                const submissions = deliverable.submissions || []
+  if (deliverables.length === 0) return null
 
-                return (
-                    <div key={deliverable.id} className="rounded-lg border bg-card p-4 shadow-sm">
-                        <div className="flex flex-wrap items-start justify-between mb-4">
-                            <div className="flex-1">
-                                <div className="flex flex-wrap items-center gap-2 mb-2">
-                                    <FileText className="h-5 w-5 text-primary" />
-                                    <h3 className="font-semibold text-lg">{deliverable.name}</h3>
-                                    {getDeliverableStatus(deliverable)}
-                                </div>
-                                <p className="text-sm text-muted-foreground mb-2">{deliverable.description}</p>
-                                <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-                                    <div className="flex items-center gap-1">
-                                        <Calendar className="h-4 w-4" />
-                                        {formatDeadline(deliverable.deadline)}
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                        <Clock className="h-4 w-4" />
-                                        Rendu : {deliverable.type === "archive" ? "archive" : "lien Git"}
-                                    </div>
-                                    {deliverable.allowLateSubmission && (
-                                        <div className="flex items-center gap-1 text-orange-600">
-                                            <Clock className="h-4 w-4" />
-                                            Retard autorisé (−{formatDecimal(deliverable.penaltyPerHour)} pt/h)
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+  return (
+    <div className="space-y-6">
+      {deliverables.map((deliverable) => {
+        const rules = deliverable.validationRules ?? []
+        const received = deliverable.submissions?.length ?? 0
+        const isArchive = deliverable.type === "archive"
 
-                            <div className="flex flex-wrap items-center gap-2">
-                                <Button 
-                                    variant="outline" 
-                                    size="sm" 
-                                    onClick={() => analyseSimilarity(deliverable.id)}
-                                    disabled={submissions.length === 0}
-                                >
-                                    <Sparkles className="h-4 w-4 mr-1" />
-                                    Analyser la similarité
-                                </Button>
-
-                                <DeliverableConstraintDialog
-                                    deliverableId={deliverable.id}
-                                    onConstraintAdded={(constraint) => handleConstraintAdded(constraint)}
-                                />
-                                
-                                <Button 
-                                    variant="ghost" 
-                                    size="sm" 
-                                    onClick={() => handleEditDeliverable(deliverable)}
-                                >
-                                    <Edit className="h-4 w-4" />
-                                </Button>
-                                
-                                <Button 
-                                    variant="ghost" 
-                                    size="sm"
-                                    onClick={() => handleDeleteDeliverable(deliverable.id)}
-                                >
-                                    <Trash2 className="h-4 w-4 text-red-600" />
-                                </Button>
-                            </div>
-                        </div>
-
-                        <DeliverableStats 
-                            deliverable={deliverable} 
-                            totalGroups={project.groups?.length || 0} 
-                        />
-
-                        <div className="flex flex-wrap items-center justify-between pt-3 border-t">
-                            <span className="text-sm font-medium">Règles de validation</span>
-                            <span className="text-sm text-muted-foreground">
-                                {deliverable.validationRules?.length > 0
-                                    ? deliverable.validationRules.map((rule: any) => describeRule(rule)).join(", ")
-                                    : "Aucune règle définie"}
-                            </span>
-                        </div>
-
-                        <div className="flex flex-wrap items-center justify-between pt-4 border-t">
-                            <div className="flex flex-wrap items-center gap-4 text-sm">
-                                <span className="font-medium">
-                                    Rendus : {submissions.length}/{project.groups?.length || 0}
-                                </span>
-                            </div>
-                            
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => toggleDrop(deliverable.id)}
-                                disabled={submissions.length === 0}
-                            >
-                                {isOpen ? (
-                                    <>
-                                        <ChevronUp className="mr-1 h-4 w-4" /> Fermer
-                                    </>
-                                ) : (
-                                    <>
-                                        <ChevronDown className="mr-1 h-4 w-4" /> 
-                                        {submissions.length > 0 ? `Voir les ${submissions.length} rendus` : 'Voir les rendus'}
-                                    </>
-                                )}
-                            </Button>
-                        </div>
-
-                        {isOpen && submissions.length > 0 && (
-                            <div className="mt-4 overflow-x-auto rounded-lg border">
-                                <table className="w-full text-sm">
-                                    <thead className="bg-muted/50">
-                                        <tr className="border-b text-left">
-                                            <th className="py-3 px-4 font-medium">Groupe</th>
-                                            <th className="py-3 px-4 font-medium">Délai</th>
-                                            <th className="py-3 px-4 font-medium">Similarité</th>
-                                            <th className="py-3 px-4 font-medium">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {submissions.map((submission: any) => (
-                                            <tr key={submission.id} className="border-b hover:bg-muted/25 transition-colors">
-                                                <td className="py-3 px-4 font-medium">
-                                                    {submission.group?.name || 'Groupe inconnu'}
-                                                </td>
-                                                
-                                                <td className="py-3 px-4">
-                                                    <SubmissionStatus 
-                                                        submission={submission} 
-                                                        deliverable={deliverable} 
-                                                    />
-                                                </td>
-
-
-                                                <td className="py-3 px-4">
-                                                    <div className="space-y-1">
-                                                        <SimilarityBar ratio={submission.similarityScore || 0} />
-                                                        <span className="text-xs text-muted-foreground">
-                                                            {formatPercent((submission.similarityScore || 0), 1)}
-                                                        </span>
-                                                    </div>
-                                                </td>
-
-                                               <td className="py-3 px-4">
-                                                    <div className="flex flex-wrap gap-2">
-                                                        <Button
-                                                            size="sm"
-                                                            variant="outline"
-                                                            onClick={() => handleDownload(submission)}
-                                                        >
-                                                            <Download className="h-4 w-4 mr-1" /> 
-                                                            Télécharger
-                                                        </Button>
-                                                        
-                                                                                                               <Button
-                                                            size="sm"
-                                                            variant="default"
-                                                            onClick={() => setSelected({ submission, deliverableId: deliverable.id })}
-                                                        >
-                                                            <Eye className="h-4 w-4 mr-1" />
-                                                            Détails
-                                                        </Button>
-                                                    </div>
-                                                </td>
-                                                                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-
-                        {isOpen && submissions.length === 0 && (
-                            <div className="mt-4 text-center py-8 text-muted-foreground">
-                                <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                                <p>Aucun rendu pour ce livrable</p>
-                            </div>
-                        )}
-                    </div>
-                )
-            })}
-
-            {(!project?.deliverables || project.deliverables.length === 0) && (
-                <div className="text-center py-12 text-muted-foreground">
-                    <FileText className="h-16 w-16 mx-auto mb-4 opacity-50" />
-                    <p className="text-lg font-medium">Aucun livrable créé</p>
-                    <p className="text-sm">Créez un livrable pour que les groupes puissent déposer leur travail.</p>
+        return (
+          <article key={deliverable.id} className="space-y-5 rounded-xl border bg-card p-5 text-card-foreground shadow-sm">
+            <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-lg font-semibold leading-snug">{deliverable.name}</h3>
+                  <Badge variant="outline">{isArchive ? "Archive" : "Lien Git"}</Badge>
+                  <DueBadge date={deliverable.deadline} />
                 </div>
-            )}
-      <Dialog open={selected !== null} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
-          <DialogTitle className="sr-only">Détail du rendu</DialogTitle>
-          <DialogDescription className="sr-only">Résultats de validation et similarité du rendu.</DialogDescription>
-          {selected && (
-            <DeliverableGroupDetails
-              deliverableId={selected.deliverableId}
-              groupId={selected.submission.group.id}
-              groupName={selected.submission.group.name}
-              onClose={() => setSelected(null)}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
-        </div>
+                <p className="text-sm text-muted-foreground">
+                  Échéance : {formatDateFull(deliverable.deadline)} à {formatTime(deliverable.deadline)}
+                </p>
+                <p className="text-sm text-muted-foreground">{latePolicy(deliverable)}</p>
+                {deliverable.description && <p className="max-w-3xl whitespace-pre-line pt-1 text-sm">{deliverable.description}</p>}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => onEdit(deliverable)}>
+                  <Pencil aria-hidden="true" />
+                  Modifier
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="icon" className="size-8" aria-label={`Autres actions sur ${deliverable.name}`}>
+                      <MoreHorizontal aria-hidden="true" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem variant="destructive" onSelect={() => remove(deliverable)}>
+                      <Trash2 aria-hidden="true" />
+                      Supprimer le livrable
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </header>
 
+            <section className="space-y-3 border-t pt-4" aria-label={`Règles de conformité de ${deliverable.name}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold">Règles de conformité</h4>
+                {isArchive && <DeliverableConstraintDialog onAdd={(rule) => addRule(deliverable, rule)} />}
+              </div>
+              {!isArchive ? (
+                <QuietEmpty>Le contenu d’un dépôt Git n’est pas inspecté : aucune règle ne s’applique à ce livrable.</QuietEmpty>
+              ) : rules.length === 0 ? (
+                <QuietEmpty>
+                  Aucune règle : tous les rendus sont acceptés tels quels. Ajoutez par exemple un fichier requis ou une taille maximale ; les étudiants les voient avant de rendre.
+                </QuietEmpty>
+              ) : (
+                <ul className="divide-y rounded-md border">
+                  {rules.map((rule) => {
+                    const label = describeRule(rule)
+                    return (
+                      <li key={rule.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                        <span className="min-w-0">{label}</span>
+                        <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => removeRule(deliverable, rule.id, label)}>
+                          <X aria-hidden="true" />
+                          <span className="sr-only">Retirer la règle : {label}</span>
+                        </Button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </section>
 
-    )
+            <section className="space-y-3 border-t pt-4" aria-label={`Rendus de ${deliverable.name}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <DeliverableStats deliverable={deliverable} groups={groups} />
+                <Button variant="outline" size="sm" disabled={received < 2 || analysing !== null} onClick={() => analyse(deliverable)}>
+                  {analysing === deliverable.id && <Loader2 aria-hidden="true" className="animate-spin" />}
+                  Analyser la ressemblance
+                </Button>
+              </div>
+              {received < 2 && (
+                <p className="text-xs text-muted-foreground">L’analyse de ressemblance compare les rendus entre eux : il en faut au moins deux.</p>
+              )}
+              <SubmissionList
+                deliverable={deliverable}
+                groups={groups}
+                onOpen={(row) => setDetails({ deliverable, row })}
+                onGrade={() => onGrade(deliverable.id)}
+              />
+            </section>
+          </article>
+        )
+      })}
+
+      {details && (
+        <SubmissionDetailsDialog
+          open
+          onOpenChange={(open) => !open && setDetails(null)}
+          deliverable={details.deliverable}
+          group={details.row.group}
+          submission={details.row.submission}
+          onGrade={() => {
+            const id = details.deliverable.id
+            setDetails(null)
+            onGrade(id)
+          }}
+        />
+      )}
+    </div>
+  )
 }

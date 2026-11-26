@@ -27,7 +27,8 @@ export function serializeGroup(db: DemoDb, group: DemoGroup): Record<string, unk
   }
 }
 
-export function serializeSubmission(db: DemoDb, submission: DemoSubmission): Record<string, unknown> {
+/** La ressemblance entre rendus n’est exposée qu’à l’enseignant (`forTeacher`), comme dans l’API. */
+export function serializeSubmission(db: DemoDb, submission: DemoSubmission, forTeacher = false): Record<string, unknown> {
   const group = db.groups.find((g) => g.id === submission.groupId)
   return {
     id: submission.id,
@@ -36,19 +37,35 @@ export function serializeSubmission(db: DemoDb, submission: DemoSubmission): Rec
     group: group ? { id: group.id, name: group.name } : null,
     fileName: submission.fileName ?? null,
     fileSize: submission.fileSize ?? null,
-    filePath: submission.fileName ?? null,
     gitUrl: submission.gitUrl ?? null,
     submittedAt: submission.submittedAt,
-    submittedBy: group?.memberIds[0] ?? null,
     isLate: submission.isLate,
     penalty: submission.penalty,
-    similarityScore: submission.similarityScore ?? null,
     validationResults: submission.validationResults ?? [],
+    ...(forTeacher && {
+      similarityScore: submission.similarityScore ?? null,
+      similarTo: (submission.similarityMatches ?? []).map((match) => {
+        const other = db.submissions.find((s) => s.id === match.submissionId)
+        const otherGroup = other ? db.groups.find((g) => g.id === other.groupId) : undefined
+        return {
+          submissionId: match.submissionId,
+          groupId: otherGroup?.id ?? null,
+          groupName: otherGroup?.name ?? null,
+          score: match.finalScore,
+          details: match.details,
+        }
+      }),
+    }),
   }
 }
 
 /** `onlyGroupIds` limite les rendus exposés (vue étudiante : uniquement ceux de son groupe). */
-export function serializeDeliverable(db: DemoDb, deliverable: DemoDeliverable, onlyGroupIds?: number[]): Record<string, unknown> {
+export function serializeDeliverable(
+  db: DemoDb,
+  deliverable: DemoDeliverable,
+  onlyGroupIds?: number[],
+  forTeacher = !onlyGroupIds,
+): Record<string, unknown> {
   const rules = db.rules.filter((r) => r.deliverableId === deliverable.id)
   const submissions = db.submissions.filter(
     (s) => s.deliverableId === deliverable.id && (!onlyGroupIds || onlyGroupIds.includes(s.groupId)),
@@ -71,7 +88,7 @@ export function serializeDeliverable(db: DemoDb, deliverable: DemoDeliverable, o
       configuration: r.configuration,
       errorMessage: r.errorMessage ?? null,
     })),
-    submissions: submissions.map((s) => serializeSubmission(db, s)),
+    submissions: submissions.map((s) => serializeSubmission(db, s, forTeacher)),
     createdAt: deliverable.createdAt,
     updatedAt: deliverable.updatedAt,
   }
@@ -97,7 +114,7 @@ export function serializeProjectSummary(db: DemoDb, project: DemoProject): Recor
       ? { id: promotion.id, name: promotion.name, students: promotion.studentIds.map((id) => serializeUser(db, id)) }
       : null,
     groups: groups.map((g) => serializeGroup(db, g)),
-    deliverables: deliverables.map((d) => serializeDeliverable(db, d)),
+    deliverables: deliverables.map((d) => serializeDeliverable(db, d, undefined, false)),
     teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : "",
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,

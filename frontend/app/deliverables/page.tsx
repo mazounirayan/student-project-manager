@@ -1,40 +1,30 @@
 "use client"
 
-import { projectPath } from "@/lib/routes"
+import Link from "next/link"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { FileText, FolderOpen } from "lucide-react"
+import { ProtectedRoute } from "@/components/auth/protected-route"
+import { SubmissionDetailsDialog } from "@/components/deliverables/DeliverableGroupDetails"
+import { DeliverableStats } from "@/components/deliverables/DeliverableStats"
+import { SubmissionList } from "@/components/deliverables/SubmissionList"
 import { MainLayout } from "@/components/layout/main-layout"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { PageContainer, PageHeader } from "@/components/layout/page"
+import { DueBadge } from "@/components/shared/DueBadge"
+import { EmptyState } from "@/components/shared/EmptyState"
+import { ErrorState } from "@/components/shared/ErrorState"
+import { SectionCard } from "@/components/shared/SectionCard"
+import { CardsSkeleton } from "@/components/shared/Skeletons"
+import { StatTile } from "@/components/shared/StatTile"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { FileText, Calendar, Users, Clock, AlertTriangle, FolderOpen, CheckCircle } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { ProtectedRoute } from "@/components/auth/protected-route"
+import { Switch } from "@/components/ui/switch"
+import { errorMessage } from "@/lib/api"
+import { gradingHref, isPastDeadline, latePolicy, summarize, type Deliverable, type GroupRef, type GroupRow } from "@/lib/deliverables"
+import { formatDateFull, formatTime, plural } from "@/lib/format"
+import { projectPath } from "@/lib/routes"
 import { fetchMyProjects, getProjectById, type Project } from "@/services/project.service"
-import { ErrorState } from "@/components/shared/ErrorState"
-import { EmptyState } from "@/components/shared/EmptyState"
-import { CardsSkeleton } from "@/components/shared/Skeletons"
-import { daysUntil, formatDateTime } from "@/lib/format"
-import { useRouter } from "next/navigation"
-import { toast } from "sonner"
-
-type Submission = {
-  id: number
-  groupId: number
-  group?: { id: number; name: string } | null
-  fileName?: string | null
-  gitUrl?: string | null
-  submittedAt: string
-  isLate: boolean
-  similarityScore?: number | null
-}
-type Deliverable = {
-  id: number
-  name: string
-  description: string
-  type: "archive" | "git_link"
-  deadline: string
-  submissions?: Submission[]
-}
 
 export default function DeliverablesPage() {
   return (
@@ -46,261 +36,206 @@ export default function DeliverablesPage() {
 
 function DeliverablesPageContent() {
   const [projects, setProjects] = useState<Project[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [project, setProject] = useState<Project | null>(null)
-  const [deliverables, setDeliverables] = useState<Deliverable[]>([])
   const [loading, setLoading] = useState(true)
   const [projectLoading, setProjectLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const router = useRouter()
+  const [onlyAttention, setOnlyAttention] = useState(false)
+  const [details, setDetails] = useState<{ deliverable: Deliverable; row: GroupRow } | null>(null)
 
   const loadProjects = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchMyProjects()
-      const list = Array.isArray(data) ? data : []
+      const list = await fetchMyProjects()
       setProjects(list)
-      if (list.length > 0 && !selectedProjectId) {
-        setSelectedProjectId(String(list[0].id))
-      }
+      setSelectedId((current) => current ?? (list[0] ? String(list[0].id) : null))
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible de charger vos projets.")
+      setError(errorMessage(err, "Impossible de charger vos projets."))
     } finally {
       setLoading(false)
     }
-  }, [selectedProjectId])
+  }, [])
 
   const loadProject = useCallback(async () => {
-    if (!selectedProjectId) return
+    if (!selectedId) return
     setProjectLoading(true)
+    setError(null)
     try {
-      const detail = await getProjectById(selectedProjectId)
-      setProject(detail)
-      setDeliverables((detail.deliverables ?? []) as Deliverable[])
+      setProject(await getProjectById(selectedId))
     } catch (err) {
       setProject(null)
-      setDeliverables([])
-      toast.error(err instanceof Error ? err.message : "Impossible de charger ce projet.")
+      setError(errorMessage(err, "Impossible de charger ce projet."))
     } finally {
       setProjectLoading(false)
     }
-  }, [selectedProjectId])
+  }, [selectedId])
 
   useEffect(() => {
     loadProjects()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [loadProjects])
 
   useEffect(() => {
     loadProject()
   }, [loadProject])
 
-  const stats = useMemo(() => {
-    const allSubmissions = deliverables.flatMap((d) => d.submissions ?? [])
+  const groups = useMemo(() => (project?.groups ?? []) as GroupRef[], [project])
+  const deliverables = useMemo(() => (project?.deliverables ?? []) as Deliverable[], [project])
+
+  const totals = useMemo(() => {
+    const parts = deliverables.map((deliverable) => summarize(deliverable, groups))
+    const sum = (pick: (part: (typeof parts)[number]) => number) => parts.reduce((total, part) => total + pick(part), 0)
     return {
-      total: deliverables.length,
-      submissions: allSubmissions.length,
-      late: allSubmissions.filter((s) => s.isLate).length,
-      missing: Math.max(
-        0,
-        deliverables.reduce((sum, d) => sum + Math.max(0, (project?.groups?.length ?? 0) - (d.submissions?.length ?? 0)), 0),
-      ),
-      flagged: allSubmissions.filter((s) => (s.similarityScore ?? 0) >= 70).length,
+      expected: deliverables.length * groups.length,
+      received: sum((p) => p.received),
+      late: sum((p) => p.late),
+      missing: sum((p) => p.missing),
+      nonCompliant: sum((p) => p.nonCompliant),
+      flagged: sum((p) => p.flagged),
+      analysed: sum((p) => p.analysed),
     }
-  }, [deliverables, project?.groups?.length])
+  }, [deliverables, groups])
+
+  const manageHref = project ? `${projectPath("/projects", project.id)}#deliverables` : "/projects"
 
   return (
     <MainLayout>
-      <div className="p-6">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">Livrables</h1>
-            <p className="text-muted-foreground">Suivez les rendus de vos projets par groupe</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            {projects.length > 0 && (
-              <Select value={selectedProjectId ?? undefined} onValueChange={setSelectedProjectId}>
-                <SelectTrigger className="w-full sm:w-[260px]">
-                  <SelectValue placeholder="Sélectionner un projet" />
-                </SelectTrigger>
-                <SelectContent>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={String(p.id)}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {project && (
-              <Button onClick={() => router.push(projectPath("/projects", project.id))}>
-                Gérer le projet
-              </Button>
-            )}
-          </div>
-        </div>
+      <PageContainer>
+        <PageHeader
+          title="Livrables"
+          description="Qui a rendu, qui est en retard, ce qui n’est pas conforme et ce qui ressemble trop à un autre rendu."
+          actions={
+            projects.length > 0 && (
+              <>
+                <div className="w-full sm:w-72">
+                  <Label htmlFor="deliverables-project" className="sr-only">
+                    Projet
+                  </Label>
+                  <Select value={selectedId ?? undefined} onValueChange={setSelectedId}>
+                    <SelectTrigger id="deliverables-project" className="w-full">
+                      <SelectValue placeholder="Choisir un projet" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {projects.map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {project && (
+                  <Button asChild variant="outline">
+                    <Link href={manageHref}>Gérer les livrables</Link>
+                  </Button>
+                )}
+              </>
+            )
+          }
+        />
 
         {loading ? (
-          <CardsSkeleton count={3} />
+          <CardsSkeleton count={2} />
         ) : error ? (
-          <ErrorState message={error} onRetry={loadProjects} />
+          <ErrorState message={error} onRetry={project || projects.length > 0 ? loadProject : loadProjects} />
         ) : projects.length === 0 ? (
           <EmptyState
             icon={FolderOpen}
             title="Aucun projet pour le moment"
-            description="Créez un projet, ses groupes et ses livrables pour suivre les rendus ici."
+            description="Créez un projet, ses groupes et ses livrables : le suivi des rendus apparaîtra ici."
+            action={
+              <Button asChild>
+                <Link href="/projects">Voir les projets</Link>
+              </Button>
+            }
+          />
+        ) : projectLoading || !project ? (
+          <CardsSkeleton count={2} />
+        ) : deliverables.length === 0 ? (
+          <EmptyState
+            icon={FileText}
+            title="Aucun livrable dans ce projet"
+            description="Définissez ce que les groupes doivent rendre, avec une échéance et des règles de conformité."
+            action={
+              <Button asChild>
+                <Link href={manageHref}>Créer un livrable</Link>
+              </Button>
+            }
           />
         ) : (
-          <>
-            <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-              <Card>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Livrables</CardTitle>
-                  <FileText aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stats.total}</div>
-                  <p className="text-xs text-muted-foreground">Pour ce projet</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Rendus</CardTitle>
-                  <Users aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stats.submissions}</div>
-                  <p className="text-xs text-muted-foreground">Rendus reçus</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">En retard</CardTitle>
-                  <Clock aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-destructive">{stats.late}</div>
-                  <p className="text-xs text-muted-foreground">Rendus après l’échéance</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Manquants</CardTitle>
-                  <AlertTriangle aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stats.missing}</div>
-                  <p className="text-xs text-muted-foreground">Rendus attendus non reçus</p>
-                </CardContent>
-              </Card>
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+              <StatTile
+                label="Rendus reçus"
+                value={`${totals.received}/${totals.expected}`}
+                hint={`${plural(deliverables.length, "livrable")}, ${plural(groups.length, "groupe")}`}
+              />
+              <StatTile label="En retard" value={totals.late} hint="rendus après l’échéance" emphasis={totals.late > 0} />
+              <StatTile label="Sans rendu" value={totals.missing} hint="échéance dépassée" emphasis={totals.missing > 0} />
+              <StatTile label="Non conformes" value={totals.nonCompliant} hint="règles non respectées" emphasis={totals.nonCompliant > 0} />
+              <StatTile
+                label="À vérifier"
+                value={totals.flagged}
+                hint={totals.analysed === 0 ? "ressemblance non analysée" : "rendus à forte ressemblance"}
+                emphasis={totals.flagged > 0}
+              />
             </div>
 
-            {projectLoading ? (
-              <CardsSkeleton count={2} />
-            ) : deliverables.length === 0 ? (
-              <EmptyState
-                icon={FileText}
-                title="Aucun livrable défini pour ce projet"
-                description="Créez des livrables depuis la page du projet pour suivre les rendus des groupes."
-              />
-            ) : (
-              <div className="grid gap-6">
-                {deliverables.map((deliverable) => {
-                  const groupCount = project?.groups?.length ?? 0
-                  const submissions = deliverable.submissions ?? []
-                  const lateCount = submissions.filter((s) => s.isLate).length
-                  const remaining = daysUntil(deliverable.deadline)
-                  const isOverdue = remaining !== null && remaining < 0
-                  const allIn = groupCount > 0 && submissions.length >= groupCount
+            <div className="flex items-center gap-3">
+              <Switch id="only-attention" checked={onlyAttention} onCheckedChange={setOnlyAttention} />
+              <Label htmlFor="only-attention" className="font-normal">
+                Afficher seulement les groupes qui demandent un regard
+              </Label>
+            </div>
 
-                  return (
-                    <Card key={deliverable.id} className={isOverdue && !allIn ? "border-destructive/60" : ""}>
-                      <CardHeader>
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="space-y-1">
-                            <CardTitle className="flex flex-wrap items-center gap-2 text-xl">
-                              <FileText aria-hidden="true" className="h-5 w-5" />
-                              <span>{deliverable.name}</span>
-                            </CardTitle>
-                            <CardDescription className="flex flex-wrap items-center gap-2">
-                              <span className="flex items-center gap-1">
-                                <Calendar aria-hidden="true" className="h-3 w-3" />
-                                <span>Échéance : {formatDateTime(deliverable.deadline)}</span>
-                              </span>
-                              {isOverdue && !allIn && <Badge variant="destructive">Échéance dépassée</Badge>}
-                            </CardDescription>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge variant={deliverable.type === "archive" ? "default" : "secondary"}>
-                              {deliverable.type === "archive" ? "Archive" : "Lien Git"}
-                            </Badge>
-                            {allIn && (
-                              <Badge variant="outline" className="flex items-center gap-1">
-                                <CheckCircle aria-hidden="true" className="h-3 w-3" />
-                                Complet
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-sm text-muted-foreground">{deliverable.description}</p>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="mb-4 grid grid-cols-2 gap-4 md:grid-cols-4">
-                          <div className="text-center">
-                            <div className="text-lg font-bold">{submissions.length}/{groupCount}</div>
-                            <div className="text-xs text-muted-foreground">Groupes ayant rendu</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-lg font-bold text-yellow-600 dark:text-yellow-400">{lateCount}</div>
-                            <div className="text-xs text-muted-foreground">En retard</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-lg font-bold text-red-600 dark:text-red-400">
-                              {Math.max(0, groupCount - submissions.length)}
-                            </div>
-                            <div className="text-xs text-muted-foreground">Non rendus</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
-                              {submissions.filter((s) => (s.similarityScore ?? 0) >= 70).length}
-                            </div>
-                            <div className="text-xs text-muted-foreground">Similarité élevée</div>
-                          </div>
-                        </div>
-
-                        {submissions.length > 0 && (
-                          <div className="space-y-2 rounded-lg border p-3">
-                            {submissions.map((submission) => (
-                              <div key={submission.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                                <span className="font-medium">{submission.group?.name ?? `Groupe ${submission.groupId}`}</span>
-                                <span className="flex flex-wrap items-center gap-2">
-                                  <span className="text-muted-foreground">
-                                    Rendu le {formatDateTime(submission.submittedAt)}
-                                  </span>
-                                  <Badge variant={submission.isLate ? "destructive" : "secondary"}>
-                                    {submission.isLate ? "Retard" : "À l’heure"}
-                                  </Badge>
-                                </span>
-                              </div>
-                            ))}
-                          </div>
+            {deliverables.map((deliverable) => {
+              const stats = summarize(deliverable, groups)
+              return (
+                <SectionCard
+                  key={deliverable.id}
+                  title={deliverable.name}
+                  description={`Échéance : ${formatDateFull(deliverable.deadline)} à ${formatTime(deliverable.deadline)}`}
+                  action={{ href: manageHref, label: "Gérer le livrable" }}
+                >
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {stats.complete && isPastDeadline(deliverable.deadline) ? (
+                          <Badge variant="secondary">Tous les groupes ont rendu</Badge>
+                        ) : (
+                          <DueBadge date={deliverable.deadline} />
                         )}
-
-                        <div className="mt-4">
-                          <Button size="sm" onClick={() => router.push(projectPath("/projects", project?.id ?? 0))}>
-                            Noter et gérer
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )
-                })}
-              </div>
-            )}
-          </>
+                        <Badge variant="outline">{deliverable.type === "archive" ? "Archive" : "Lien Git"}</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground">{latePolicy(deliverable)}</p>
+                    </div>
+                    <DeliverableStats deliverable={deliverable} groups={groups} />
+                    <SubmissionList
+                      deliverable={deliverable}
+                      groups={groups}
+                      onlyAttention={onlyAttention}
+                      onOpen={(row) => setDetails({ deliverable, row })}
+                      gradeHref={gradingHref(project.id, deliverable.id)}
+                    />
+                  </div>
+                </SectionCard>
+              )
+            })}
+          </div>
         )}
-      </div>
+
+        {details && (
+          <SubmissionDetailsDialog
+            open
+            onOpenChange={(open) => !open && setDetails(null)}
+            deliverable={details.deliverable}
+            group={details.row.group}
+            submission={details.row.submission}
+            gradeHref={gradingHref(project?.id ?? 0, details.deliverable.id)}
+          />
+        )}
+      </PageContainer>
     </MainLayout>
   )
 }

@@ -83,6 +83,8 @@ export interface DemoSubmission {
   isLate: boolean
   penalty: number
   similarityScore?: number
+  /** Rendus les plus proches (analyse de ressemblance), du plus au moins proche. */
+  similarityMatches?: Array<{ submissionId: number; finalScore: number; details: string }>
   validationResults?: Array<{ type: string; configuration?: string; passed: boolean; message: string }>
 }
 

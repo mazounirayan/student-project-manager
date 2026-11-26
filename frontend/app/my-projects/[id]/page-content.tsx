@@ -278,10 +278,22 @@ export function StudentProjectDetailsPageContent({ params }: ProjectDetailsPageP
                   {dates.map((item) => (
                     <li key={item.key} className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 py-2.5 first:pt-0 last:pb-0">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium">{item.title}</p>
+                        <p className="text-sm font-medium">
+                          {item.href ? (
+                            <Link href={item.href} className="rounded-sm hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                              {item.title}
+                            </Link>
+                          ) : (
+                            item.title
+                          )}
+                        </p>
                         <p className="text-xs text-muted-foreground">{item.when}</p>
                       </div>
-                      {item.done ? <Badge variant="secondary">Rendu</Badge> : item.badge && <DueBadge date={item.date} />}
+                      {item.done ? (
+                        <Badge variant={item.late ? "destructive" : "secondary"}>{item.late ? "Rendu en retard" : "Rendu"}</Badge>
+                      ) : (
+                        item.badge && <DueBadge date={item.date} />
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -329,6 +341,10 @@ interface ProjectDate {
   when: string
   date: string
   done: boolean
+  /** Rendu déposé après l’échéance. */
+  late?: boolean
+  /** Page où agir (le livrable se rend depuis l’espace du groupe). */
+  href?: string
   /** Affiche le délai restant (ou le dépassement) à côté de la date. */
   badge: boolean
 }
@@ -347,12 +363,15 @@ function collectDates(project: Project, myGroup: ProjectGroup | null, groupsOpen
     })
   }
   for (const deliverable of deliverablesOf(project)) {
+    const submission = myGroup ? deliverable.submissions?.find((item) => item.groupId === myGroup.id) : undefined
     items.push({
       key: `d-${deliverable.id}`,
       title: deliverable.name,
       when: formatDateTime(deliverable.deadline),
       date: deliverable.deadline,
-      done: Boolean(myGroup && deliverable.submissions?.some((submission) => submission.groupId === myGroup.id)),
+      done: Boolean(submission),
+      late: submission?.isLate,
+      href: myGroup ? projectPath("/my-projects", project.id, "/group") : undefined,
       badge: true,
     })
   }
