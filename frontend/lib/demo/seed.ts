@@ -31,7 +31,7 @@ export function buildDemoDb(): DemoDb {
   ]
   const students = studentNames.map(([firstName, lastName], i) => ({
     id: 10 + i,
-    email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}@demo.example`,
+    email: `${firstName}.${lastName}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() + "@demo.example",
     firstName,
     lastName,
     role: "student" as const,

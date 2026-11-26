@@ -299,7 +299,7 @@ export default function GroupsBoard({ project, students, initialGroups, onGroups
                 ? closed
                   ? "Formation libre, terminée : les étudiants ne peuvent plus changer de groupe."
                   : `Formation libre : les étudiants peuvent aussi rejoindre ou quitter un groupe${project.groupFormationDeadline ? ` jusqu’au ${formatDateTime(project.groupFormationDeadline)}` : ""}.`
-                : "Seul vous placez les étudiants."}
+                : "C’est vous qui placez les étudiants."}
               {project.status === "draft" && " Le projet est en brouillon : les étudiants ne voient pas encore les groupes."}
             </p>
           </div>
