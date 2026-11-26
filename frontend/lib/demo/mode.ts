@@ -16,12 +16,12 @@ export const DEMO_ACCOUNTS = {
     email: "camille.fabre@demo.example",
     name: "Camille Fabre",
     label: "Enseignante",
-    description: "Gère promotions, projets, livrables et notes.",
+    description: "Suit les rendus des groupes, planifie les soutenances et publie les notes.",
   },
   student: {
     email: "alex.moret@demo.example",
     name: "Alex Moret",
     label: "Étudiant",
-    description: "Membre du Groupe 1, avec livrables à rendre.",
+    description: "Membre du Groupe 1 : rend ses livrables, rédige le rapport et consulte ses notes.",
   },
 } as const

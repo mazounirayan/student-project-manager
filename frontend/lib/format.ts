@@ -20,10 +20,22 @@ export function formatDate(value: DateInput, fallback = UNKNOWN_DATE) {
   return date ? date.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" }) : fallback
 }
 
+/** « 18 nov. » */
+export function formatDayMonth(value: DateInput, fallback = UNKNOWN_DATE) {
+  const date = toDate(value)
+  return date ? date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) : fallback
+}
+
 /** « 18 novembre 2026 » */
 export function formatDateLong(value: DateInput, fallback = UNKNOWN_DATE) {
   const date = toDate(value)
   return date ? date.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : fallback
+}
+
+/** « jeudi 26 novembre 2026 » */
+export function formatDateFull(value: DateInput, fallback = UNKNOWN_DATE) {
+  const date = toDate(value)
+  return date ? date.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : fallback
 }
 
 /** « 14 h 30 » */
@@ -65,6 +77,11 @@ export function formatNumber(value: number | null | undefined, digits = 1) {
 export function formatPercent(ratio: number | null | undefined, digits = 0) {
   if (ratio === null || ratio === undefined || Number.isNaN(ratio)) return "–"
   return `${formatNumber(ratio * 100, digits)} %`
+}
+
+/** « 1 groupe », « 0 groupe », « 3 groupes » (le zéro est au singulier en français). */
+export function plural(count: number, singular: string, pluralForm = `${singular}s`) {
+  return `${count} ${count < 2 ? singular : pluralForm}`
 }
 
 /** « 1,5 Mo » */

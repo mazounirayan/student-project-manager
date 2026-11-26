@@ -1,40 +1,47 @@
 "use client"
 
-import { useEffect, type ReactNode } from "react"
-import { useRouter } from "next/navigation"
+import type { ReactNode } from "react"
+import Link from "next/link"
+import { Lock } from "lucide-react"
 import { useAuth } from "@/contexts/auth-context"
+import { MainLayout } from "@/components/layout/main-layout"
+import { PageContainer } from "@/components/layout/page"
+import { EmptyState } from "@/components/shared/EmptyState"
+import { Button } from "@/components/ui/button"
 
 interface ProtectedRouteProps {
   children: ReactNode
   roles?: Array<"teacher" | "student">
 }
 
+const ROLE_LABELS = { teacher: "aux enseignants", student: "aux étudiants" } as const
+
 /**
- * Garde de rôle : redirige vers l’accueil si l’utilisateur n’est pas autorisé.
- * La redirection est différée d’un court instant et annulable : l’état
- * d’authentification est restauré de façon asynchrone (localStorage + vérification
- * du jeton) au chargement d’une page protégée, et un rendu intermédiaire peut
- * encore afficher user=null avant que la session ne soit rétablie.
+ * Garde de rôle. Sans session, MainLayout affiche le chargement puis l’écran de connexion
+ * (l’adresse reste la même). Avec un autre rôle, la page explique pourquoi elle est
+ * inaccessible au lieu de rediriger sans un mot.
  */
 export function ProtectedRoute({ children, roles = [] }: ProtectedRouteProps) {
   const { user, loading } = useAuth()
-  const router = useRouter()
 
-  const unauthorized = !loading && (!user || (roles.length > 0 && !roles.includes(user.role)))
+  if (loading || !user) return <MainLayout>{null}</MainLayout>
 
-  useEffect(() => {
-    if (!unauthorized) return
-    const timer = window.setTimeout(() => {
-      router.push("/")
-    }, 500)
-    return () => window.clearTimeout(timer)
-  }, [unauthorized, router])
-
-  if (loading || unauthorized) {
+  if (roles.length > 0 && !roles.includes(user.role)) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <span className="text-muted-foreground">Chargement…</span>
-      </div>
+      <MainLayout>
+        <PageContainer width="narrow">
+          <EmptyState
+            icon={Lock}
+            title={`Cette page est réservée ${roles.map((role) => ROLE_LABELS[role]).join(" et ")}`}
+            description="Votre compte n’y donne pas accès. Revenez à l’accueil pour retrouver vos pages."
+            action={
+              <Button asChild>
+                <Link href="/">Retourner à l’accueil</Link>
+              </Button>
+            }
+          />
+        </PageContainer>
+      </MainLayout>
     )
   }
 

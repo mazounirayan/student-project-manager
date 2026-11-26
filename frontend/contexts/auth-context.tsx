@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import type { AuthContextType, User } from "@/types/auth"
-import { BACKEND_URL } from "@/lib/api"
+import { ApiError, apiGet, apiPost } from "@/lib/api"
 import { bootstrapDemo } from "@/lib/demo/install"
 
 // En démo statique, installe l’intercepteur fetch avant le premier appel API.
@@ -32,12 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const refresh = window.localStorage.getItem("refreshToken")
       if (!refresh) throw new Error("Aucun jeton de rafraîchissement")
 
-      const response = await fetch(`${BACKEND_URL}/api/auth/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken: refresh }),
-      })
-      const data = response.ok ? await response.json() : null
+      const data = await apiPost<{ token?: string; refreshToken?: string; user?: User }>("/auth/refresh", { refreshToken: refresh })
       if (!data?.token) throw new Error("Rafraîchissement refusé")
 
       window.localStorage.setItem("token", data.token)
@@ -65,10 +60,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setUser(JSON.parse(storedUser))
 
-      const response = await fetch(`${BACKEND_URL}/api/auth/verify`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!response.ok) await refreshToken()
+      try {
+        await apiGet("/auth/verify")
+      } catch (err) {
+        if (!(err instanceof ApiError)) throw err
+        await refreshToken()
+      }
     } catch {
       setUser(null)
     } finally {
@@ -96,30 +93,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer)
   }, [user, refreshToken])
 
+  // `loading` ne couvre que la restauration de la session : le formulaire de connexion
+  // gère lui-même son état d’envoi, sinon il serait démonté (et son erreur perdue) à chaque essai.
+  // `loading` ne couvre que la restauration de la session : le formulaire de connexion
+  // gère lui-même son état d’envoi, sinon il serait démonté (et son erreur perdue) à chaque essai.
   const login = async (email: string, password: string) => {
-    setLoading(true)
-    try {
-      const response = await fetch(`${BACKEND_URL}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      })
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null)
-        throw new Error(errorData?.error || "Connexion impossible")
-      }
+    const data = await apiPost<{ user: User; token?: string; refreshToken?: string }>("/auth/login", { email, password })
+    if (!data.token || !data.refreshToken) throw new Error("Réponse de connexion incomplète")
 
-      const data = await response.json()
-      if (!data.token || !data.refreshToken) throw new Error("Réponse de connexion incomplète")
-
-      window.localStorage.setItem("user", JSON.stringify(data.user))
-      window.localStorage.setItem("token", data.token)
-      window.localStorage.setItem("refreshToken", data.refreshToken)
-      setUser(data.user)
-      router.push(data.user.role === "teacher" ? "/promotions" : "/my-projects")
-    } finally {
-      setLoading(false)
-    }
+    window.localStorage.setItem("user", JSON.stringify(data.user))
+    window.localStorage.setItem("token", data.token)
+    window.localStorage.setItem("refreshToken", data.refreshToken)
+    setUser(data.user)
+    router.push("/")
   }
 
   const value: AuthContextType = { user, login, logout, loading, isRefreshing, refreshToken, checkAuth }
