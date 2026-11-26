@@ -90,8 +90,10 @@ function PromotionsPageContent() {
     const confirmed = await confirmAction({
       title: `Retirer ${who} de la promotion ?`,
       description:
-        `${students.length === 1 ? "Cet étudiant ne verra" : "Ces étudiants ne verront"} plus les projets de « ${promotion.name} »` +
-        `${projects > 0 ? ` (${plural(projects, "projet")})` : ""}. ` +
+        (projects > 0
+          ? `${students.length === 1 ? "Cet étudiant ne verra" : "Ces étudiants ne verront"} plus les projets de « ${promotion.name} » (${plural(projects, "projet")}) et ${students.length === 1 ? "sera retiré" : "seront retirés"} de leurs groupes. ` +
+            `Les rendus déjà déposés restent au nom de chaque groupe. `
+          : `${students.length === 1 ? "Cet étudiant ne fera" : "Ces étudiants ne feront"} plus partie de « ${promotion.name} ». `) +
         `${students.length === 1 ? "Son compte est conservé" : "Leurs comptes sont conservés"} et vous pourrez les ajouter de nouveau à tout moment.`,
       confirmText: "Retirer",
       destructive: true,

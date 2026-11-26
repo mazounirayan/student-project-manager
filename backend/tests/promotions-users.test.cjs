@@ -11,12 +11,13 @@ const bob = student(11);
 
 const makePromotion = (extra = {}) => ({ id: 1, name: 'Promo', year: 2026, teacher: owner, students: [alice, bob], projects: [], ...extra });
 
-function install(promotion, users = [owner, other, alice, bob]) {
+function install(promotion, users = [owner, other, alice, bob], groups = []) {
   const promotions = memoryRepository([promotion]);
+  const groupRepository = memoryRepository(groups);
   const removed = [];
   promotions.remove = async value => { removed.push(value); return value; };
-  const restore = installRepositories({ Promotion: promotions, User: memoryRepository(users) });
-  return { restore, removed, promotions };
+  const restore = installRepositories({ Promotion: promotions, User: memoryRepository(users), Group: groupRepository });
+  return { restore, removed, promotions, groupRepository };
 }
 
 function promotionService() {
@@ -83,6 +84,23 @@ test("retirer un étudiant d'une promotion conserve son compte", async () => {
     await rejectsWithStatus(promotionService().removeStudent(1, other.id, alice.id), 403);
     await promotionService().removeStudent(1, owner.id, alice.id);
     assert.deepEqual(promotion.students.map(member => member.id), [bob.id]);
+  } finally { restore(); }
+});
+
+test("retirer un étudiant d'une promotion le retire aussi des groupes de ses projets, sans toucher aux autres groupes", async () => {
+  const promotion = makePromotion();
+  const otherPromotion = { id: 2, name: 'Autre promo', teacher: owner, students: [alice] };
+  const project = { id: 7, promotion };
+  const alone = { id: 30, name: 'Groupe 1', project, members: [alice, bob] };
+  const withoutAlice = { id: 31, name: 'Groupe 2', project, members: [bob] };
+  const elsewhere = { id: 32, name: 'Groupe 1', project: { id: 8, promotion: otherPromotion }, members: [alice] };
+  const { restore, groupRepository } = install(promotion, undefined, [alone, withoutAlice, elsewhere]);
+  try {
+    await promotionService().removeStudent(1, owner.id, alice.id);
+    assert.deepEqual(alone.members.map(member => member.id), [bob.id]);
+    assert.deepEqual(withoutAlice.members.map(member => member.id), [bob.id]);
+    assert.deepEqual(elsewhere.members.map(member => member.id), [alice.id]);
+    assert.deepEqual(groupRepository.saved.map(group => group.id), [alone.id]);
   } finally { restore(); }
 });
 

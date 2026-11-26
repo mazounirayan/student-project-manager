@@ -1,23 +1,23 @@
 "use client"
 
-import { projectPath } from "@/lib/routes"
+import Link from "next/link"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { Users } from "lucide-react"
+import { ProtectedRoute } from "@/components/auth/protected-route"
 import { MainLayout } from "@/components/layout/main-layout"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import { PageContainer, PageHeader } from "@/components/layout/page"
+import { EmptyState } from "@/components/shared/EmptyState"
+import { ErrorState } from "@/components/shared/ErrorState"
+import { SectionCard } from "@/components/shared/SectionCard"
+import { CardsSkeleton } from "@/components/shared/Skeletons"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { Users, Calendar, ArrowLeft } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import { ProtectedRoute } from "@/components/auth/protected-route"
-import { fetchMyProjects, getProjectById, type Project } from "@/services/project.service"
-import { ErrorState } from "@/components/shared/ErrorState"
-import { EmptyState } from "@/components/shared/EmptyState"
-import { DetailSkeleton } from "@/components/shared/Skeletons"
-import { formatDateLong } from "@/lib/format"
-
-type Member = { id: number; firstName: string; lastName: string; email: string }
-type Group = { id: number; name: string; members: Member[] }
+import { useAuth } from "@/contexts/auth-context"
+import { errorMessage } from "@/lib/api"
+import { fullName, initials } from "@/lib/people"
+import { maxGroupSize, studentGroupState } from "@/lib/projects"
+import { projectPath } from "@/lib/routes"
+import { fetchMyProjects, type Project } from "@/services/project.service"
 
 export default function MyGroupPage() {
   return (
@@ -28,36 +28,19 @@ export default function MyGroupPage() {
 }
 
 function MyGroupPageContent() {
-  const [project, setProject] = useState<Project | null>(null)
-  const [group, setGroup] = useState<Group | null>(null)
+  const { user } = useAuth()
+  const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const router = useRouter()
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const userRaw = window.localStorage.getItem("user")
-      const myId = userRaw ? Number(JSON.parse(userRaw)?.id) : null
-
-      const projects: Project[] = await fetchMyProjects()
-      for (const candidate of projects) {
-        const detail = await getProjectById(candidate.id)
-        const myGroup = ((detail.groups ?? []) as Group[]).find(
-          (g) => Array.isArray(g.members) && g.members.some((m) => m.id === myId)
-        )
-        if (myGroup) {
-          setProject(detail)
-          setGroup(myGroup)
-          return
-        }
-      }
-      // Aucun groupe rejoint parmi les projets visibles
-      setProject(null)
-      setGroup(null)
+      const data = await fetchMyProjects()
+      setProjects(Array.isArray(data) ? data : [])
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible de charger votre groupe.")
+      setError(errorMessage(err, "Impossible de charger votre groupe."))
     } finally {
       setLoading(false)
     }
@@ -67,130 +50,74 @@ function MyGroupPageContent() {
     load()
   }, [load])
 
-  if (loading) {
-    return (
-      <MainLayout>
-        <div className="p-6">
-          <DetailSkeleton />
-        </div>
-      </MainLayout>
-    )
-  }
+  const studentId = user?.id ?? 0
+  const states = useMemo(() => projects.map((project) => ({ project, ...studentGroupState(project, studentId) })), [projects, studentId])
+  const memberships = states.filter((item) => item.group)
+  const toJoin = states.find((item) => item.state === "can-join")
 
   return (
     <MainLayout>
-      <div className="p-6">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-foreground">Mon groupe</h1>
-          <p className="text-muted-foreground">Collaborez avec les membres de votre équipe</p>
-        </div>
+      <PageContainer>
+        <PageHeader title="Mon groupe" description="Vos coéquipiers et l’accès à l’espace de travail de votre groupe : livrables et rapport." />
 
-        {error ? (
+        {loading ? (
+          <CardsSkeleton count={1} />
+        ) : error ? (
           <ErrorState message={error} onRetry={load} />
-        ) : !group || !project ? (
+        ) : memberships.length === 0 ? (
           <EmptyState
             icon={Users}
-            title="Vous n’êtes pas encore dans un groupe"
-            description="Rejoignez un groupe depuis la page d’un projet pour retrouver ici vos coéquipiers et vos livrables."
+            title="Vous n’êtes dans aucun groupe"
+            description={
+              toJoin
+                ? `Les groupes de « ${toJoin.project.name} » se choisissent librement : rejoignez-en un ou créez le vôtre.`
+                : projects.length > 0
+                  ? "Votre enseignant constitue les groupes. Ils apparaîtront ici dès que vous serez placé dans l’un d’eux."
+                  : "Vos groupes apparaîtront ici dès que votre enseignant aura rendu un projet visible pour votre promotion."
+            }
             action={
-              <Button onClick={() => router.push("/my-projects")}>Voir mes projets</Button>
+              <Button asChild>
+                <Link href={toJoin ? `${projectPath("/my-projects", toJoin.project.id)}#groupes` : "/my-projects"}>{toJoin ? "Rejoindre ou créer un groupe" : "Voir mes projets"}</Link>
+              </Button>
             }
           />
         ) : (
-          <div className="grid gap-6 lg:grid-cols-3">
-            <div className="space-y-6 lg:col-span-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex flex-wrap items-center gap-2">
-                    <Users aria-hidden="true" className="h-5 w-5" />
-                    <span>{group.name}</span>
-                  </CardTitle>
-                  <CardDescription>
-                    {project.name} • {group.members.length}/{project.maxGroupSize} membres
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {group.members?.map((member) => (
-                      <div key={member.id} className="flex flex-wrap items-center gap-4 rounded-lg border p-4">
-                        <Avatar className="h-12 w-12">
-                          <AvatarFallback>
-                            {member.firstName?.[0]}
-                            {member.lastName?.[0]}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1">
-                          <h3 className="font-medium">
-                            {member.firstName} {member.lastName}
-                          </h3>
-                          <p className="truncate text-sm text-muted-foreground">{member.email}</p>
-                        </div>
+          <div className="space-y-6">
+            {memberships.map(({ project, group }) => (
+              <SectionCard
+                key={project.id}
+                title={group!.name}
+                description={`${project.name} · ${group!.members.length}/${maxGroupSize(project)} membres`}
+              >
+                <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {group!.members.map((member) => (
+                    <li key={member.id} className="flex items-center gap-3 rounded-lg border bg-card p-3">
+                      <Avatar className="h-9 w-9">
+                        <AvatarFallback className="text-xs">{initials(member)}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">
+                          {fullName(member)}
+                          {member.id === studentId && <span className="font-normal text-muted-foreground"> (vous)</span>}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">{member.email}</p>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Informations du projet</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div>
-                    <h4 className="mb-1 text-sm font-medium">Projet</h4>
-                    <p className="text-sm text-muted-foreground">{project.name}</p>
-                  </div>
-                  <div>
-                    <h4 className="mb-1 text-sm font-medium">Enseignant</h4>
-                    <p className="text-sm text-muted-foreground">{project.teacherName || "—"}</p>
-                  </div>
-                  <div>
-                    <h4 className="mb-1 flex items-center gap-1 text-sm font-medium">
-                      <Calendar aria-hidden="true" className="h-4 w-4" />
-                      Constitution des groupes
-                    </h4>
-                    <p className="text-sm text-muted-foreground">
-                      {project.groupFormationDeadline ? formatDateLong(project.groupFormationDeadline) : "Non définie"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between border-t pt-3">
-                    <span className="text-sm text-muted-foreground">Membres</span>
-                    <Badge variant="outline">
-                      {group.members.length} / {project.maxGroupSize}
-                    </Badge>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Actions rapides</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start"
-                    onClick={() => router.push(projectPath("/my-projects", project.id, "/group"))}
-                  >
-                    <Users aria-hidden="true" className="mr-2 h-4 w-4" />
-                    Espace du groupe (livrables, rapport)
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button asChild>
+                    <Link href={projectPath("/my-projects", project.id, "/group")}>Ouvrir l’espace du groupe</Link>
                   </Button>
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start"
-                    onClick={() => router.push(projectPath("/my-projects", project.id))}
-                  >
-                    <ArrowLeft aria-hidden="true" className="mr-2 h-4 w-4" />
-                    Page du projet
+                  <Button asChild variant="outline">
+                    <Link href={projectPath("/my-projects", project.id)}>Consignes, dates et groupes</Link>
                   </Button>
-                </CardContent>
-              </Card>
-            </div>
+                </div>
+              </SectionCard>
+            ))}
           </div>
         )}
-      </div>
+      </PageContainer>
     </MainLayout>
   )
 }

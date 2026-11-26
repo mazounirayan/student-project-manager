@@ -4,7 +4,7 @@
  */
 import { DEMO_ACCOUNTS } from "./mode"
 import { loadDemoDb, nextId, persist } from "./store"
-import { serializeSession, serializeGrid, serializeProjectDetail, serializeProjectSummary, serializeUser } from "./serialize"
+import { serializeSession, serializeGrid, serializeGroup, serializeProjectDetail, serializeProjectSummary, serializeUser } from "./serialize"
 import { parseCsv, parseJson } from "../student-import"
 import type { DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoPromotion, DemoReport, DemoSession, DemoUser } from "./types"
 
@@ -99,6 +99,26 @@ function findOrCreateReport(db: DemoDb, group: DemoGroup): DemoReport {
     db.reports.push(report)
   }
   return report
+}
+
+/** Message de refus tant que les étudiants ne peuvent pas rejoindre ou quitter un groupe eux-mêmes, sinon null. */
+function freeFormationClosed(project: DemoProject, verb: "rejoindre" | "quitter" = "rejoindre"): string | null {
+  if (project.groupFormationRule !== "free") {
+    return verb === "quitter"
+      ? "Les groupes de ce projet sont constitués par votre enseignant : contactez-le pour en changer"
+      : "Ce projet n’autorise pas l’inscription libre dans les groupes"
+  }
+  if (project.groupFormationDeadline && new Date(project.groupFormationDeadline) < new Date()) {
+    return "La date limite de formation des groupes est dépassée"
+  }
+  return null
+}
+
+/** « Groupe N » avec N supérieur à tous les numéros déjà utilisés dans le projet. */
+function nextGroupName(db: DemoDb, projectId: number): string {
+  const groups = db.groups.filter((g) => g.projectId === projectId)
+  const used = groups.map((g) => Number(/^Groupe (\d+)$/.exec(g.name)?.[1] ?? 0))
+  return `Groupe ${Math.max(0, groups.length, ...used) + 1}`
 }
 
 function assertOwnsProject(db: DemoDb, teacher: DemoUser, projectId: number): void {
@@ -546,7 +566,13 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       assertOwnsPromotion(db, owner, Number(m![1]))
       const promotion = db.promotions.find((p) => p.id === Number(m![1]))
       if (!promotion) return fail(404, "Promotion introuvable.")
-      promotion.studentIds = promotion.studentIds.filter((id) => id !== Number(m![2]))
+      const studentId = Number(m![2])
+      promotion.studentIds = promotion.studentIds.filter((id) => id !== studentId)
+      // Comme l’API : un étudiant retiré de la promotion quitte aussi les groupes de ses projets.
+      const promotionProjectIds = db.projects.filter((p) => p.promotionId === promotion.id).map((p) => p.id)
+      for (const group of db.groups) {
+        if (promotionProjectIds.includes(group.projectId)) group.memberIds = group.memberIds.filter((id) => id !== studentId)
+      }
       persist()
       return ok()
     }
@@ -586,6 +612,9 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
     if (route === "/projects" && method === "POST") {
       const teacher = requireTeacher(db, init, headers)
       const promotion = db.promotions.find((p) => p.id === Number(body.promotionId))
+      if (!promotion) return fail(400, "Promotion introuvable")
+      if (promotion.teacherId !== teacher.id) return fail(403, "Cette promotion appartient à un autre enseignant")
+      if (Number(body.minGroupSize) > Number(body.maxGroupSize)) return fail(400, "La taille minimale des groupes dépasse la taille maximale")
       const project: DemoProject = {
         id: nextId(db),
         name: String(body.name ?? "Nouveau projet"),
@@ -594,8 +623,8 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
         minGroupSize: Number(body.minGroupSize) || 2,
         maxGroupSize: Number(body.maxGroupSize) || 4,
         groupFormationRule: (["manual", "random", "free"].includes(String(body.groupFormationRule)) ? body.groupFormationRule : "manual") as DemoProject["groupFormationRule"],
-        groupFormationDeadline: body.groupFormationDeadline ?? new Date(Date.now() + 14 * 86_400_000).toISOString(),
-        promotionId: Number(body.promotionId) || promotion?.id || db.promotions[0]?.id || 0,
+        groupFormationDeadline: body.groupFormationDeadline || null,
+        promotionId: promotion.id,
         teacherId: teacher.id,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -606,11 +635,21 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
     }
     if (m && (method === "PUT" || method === "PATCH")) {
       const teacher = requireTeacher(db, init, headers)
+      assertOwnsProject(db, teacher, Number(m![1]))
       const project = db.projects.find((p) => p.id === Number(m![1]))
       if (!project) return fail(404, "Projet introuvable.")
-      for (const key of ["name", "description", "status", "groupFormationRule", "groupFormationDeadline"] as const) {
+      const minSize = body.minGroupSize !== undefined ? Number(body.minGroupSize) : project.minGroupSize
+      const maxSize = body.maxGroupSize !== undefined ? Number(body.maxGroupSize) : project.maxGroupSize
+      if (minSize && maxSize && minSize > maxSize) return fail(400, "La taille minimale des groupes dépasse la taille maximale")
+      if (body.promotionId !== undefined) {
+        const promotion = db.promotions.find((p) => p.id === Number(body.promotionId))
+        if (!promotion) return fail(400, "Promotion introuvable")
+        if (promotion.teacherId !== teacher.id) return fail(403, "Cette promotion appartient à un autre enseignant")
+      }
+      for (const key of ["name", "description", "status", "groupFormationRule"] as const) {
         if (body[key] !== undefined) (project as any)[key] = body[key]
       }
+      if (body.groupFormationDeadline !== undefined) project.groupFormationDeadline = body.groupFormationDeadline || null
       for (const key of ["minGroupSize", "maxGroupSize", "promotionId"] as const) {
         if (body[key] !== undefined) (project as any)[key] = Number(body[key])
       }
@@ -619,8 +658,8 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       return json(serializeProjectDetail(db, project, teacher))
     }
     if (m && method === "DELETE") {
-      requireTeacher(db, init, headers)
       const id = Number(m![1])
+      assertOwnsProject(db, requireTeacher(db, init, headers), id)
       const index = db.projects.findIndex((p) => p.id === id)
       if (index === -1) return fail(404, "Projet introuvable.")
       db.projects.splice(index, 1)
@@ -640,6 +679,13 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       const project = db.projects.find((p) => p.id === projectId)
       if (!project) return fail(404, "Projet introuvable.")
       const groupsPayload: Array<{ id: number; memberIds: number[] }> = body.groups ?? []
+      const enrolled = db.promotions.find((p) => p.id === project.promotionId)?.studentIds ?? []
+      const placed = new Set<number>()
+      for (const memberId of groupsPayload.flatMap((g) => g.memberIds.map(Number))) {
+        if (!enrolled.includes(memberId)) return fail(400, "Un des étudiants n’appartient pas à la promotion du projet")
+        if (placed.has(memberId)) return fail(400, "Un étudiant ne peut appartenir qu’à un seul groupe")
+        placed.add(memberId)
+      }
       for (const groupData of groupsPayload) {
         const memberIds = groupData.memberIds.map(Number).filter((v) => Number.isFinite(v))
         const existing = db.groups.find((g) => g.id === Number(groupData.id) && g.projectId === projectId)
@@ -649,7 +695,7 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
           db.groups.push({
             id: nextId(db),
             projectId,
-            name: `Groupe ${db.groups.filter((g) => g.projectId === projectId).length + 1}`,
+            name: nextGroupName(db, projectId),
             memberIds,
           })
         }
@@ -668,28 +714,77 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       })
     }
 
+    m = /^\/groups\/project\/(\d+)$/.exec(route)
+    if (m && method === "POST") {
+      const user = requireUser(db, init, headers)
+      const projectId = Number(m![1])
+      if (!db.projects.some((p) => p.id === projectId) || !canAccessProject(db, user, projectId)) {
+        return fail(404, "Projet introuvable")
+      }
+      const project = db.projects.find((p) => p.id === projectId)!
+      let members: number[] = []
+      if (user.role === "student") {
+        const closed = freeFormationClosed(project)
+        if (closed) return fail(403, closed)
+        if (db.groups.some((g) => g.projectId === projectId && g.memberIds.includes(user.id))) {
+          return fail(409, "Vous appartenez déjà à un groupe de ce projet")
+        }
+        members = [user.id]
+      }
+      const group: DemoGroup = { id: nextId(db), projectId, name: nextGroupName(db, projectId), memberIds: members }
+      db.groups.push(group)
+      persist()
+      return json(serializeGroup(db, group), 201)
+    }
+
     m = /^\/groups\/(\d+)\/join$/.exec(route)
     if (m && method === "POST") {
       const student = requireStudent(db, init, headers)
       const group = db.groups.find((g) => g.id === Number(m![1]))
-      if (!group) return fail(404, "Groupe introuvable.")
+      if (!group) return fail(404, "Groupe introuvable")
       const project = db.projects.find((p) => p.id === group.projectId)
-      if (!project) return fail(404, "Projet introuvable.")
-      if (project.groupFormationRule !== "free") return fail(403, "Ce projet n’autorise pas l’inscription libre dans les groupes.")
-      if (new Date(project.groupFormationDeadline) < new Date()) return fail(403, "La date limite de formation des groupes est dépassée.")
-      if (!canAccessProject(db, student, project.id)) return fail(403, "Vous n’avez pas accès à ce projet.")
-      if (group.memberIds.length >= project.maxGroupSize && !group.memberIds.includes(student.id)) return fail(403, "Ce groupe est complet.")
-      for (const other of db.groups) {
-        if (other.projectId === group.projectId) other.memberIds = other.memberIds.filter((id) => id !== student.id)
+      if (!project || !canAccessProject(db, student, project.id)) return fail(404, "Projet introuvable")
+      const closed = freeFormationClosed(project)
+      if (closed) return fail(403, closed)
+      if (project.maxGroupSize && group.memberIds.length >= project.maxGroupSize) return fail(403, "Ce groupe est complet")
+      if (db.groups.some((g) => g.projectId === project.id && g.memberIds.includes(student.id))) {
+        return fail(409, "Vous appartenez déjà à un groupe de ce projet")
       }
       group.memberIds.push(student.id)
       persist()
-      return json({
-        id: group.id,
-        name: group.name,
-        members: group.memberIds.map((id) => serializeUser(db, id)),
-      })
+      return json(serializeGroup(db, group))
     }
+
+    m = /^\/groups\/(\d+)\/leave$/.exec(route)
+    if (m && method === "POST") {
+      const student = requireStudent(db, init, headers)
+      const group = db.groups.find((g) => g.id === Number(m![1]))
+      if (!group || !group.memberIds.includes(student.id)) return fail(404, "Groupe introuvable")
+      const project = db.projects.find((p) => p.id === group.projectId)
+      if (!project || !canAccessProject(db, student, project.id)) return fail(404, "Projet introuvable")
+      const closed = freeFormationClosed(project, "quitter")
+      if (closed) return fail(403, closed)
+      group.memberIds = group.memberIds.filter((id) => id !== student.id)
+      persist()
+      return json(serializeGroup(db, group))
+    }
+
+    m = /^\/groups\/(\d+)$/.exec(route)
+    if (m && method === "DELETE") {
+      const teacher = requireTeacher(db, init, headers)
+      const group = db.groups.find((g) => g.id === Number(m![1]))
+      if (!group) return fail(404, "Groupe introuvable")
+      assertOwnsProject(db, teacher, group.projectId)
+      if (group.memberIds.length > 0) return fail(409, "Ce groupe a encore des membres : déplacez-les avant de le supprimer")
+      if (db.submissions.some((s) => s.groupId === group.id) || db.reports.some((r) => r.groupId === group.id)) {
+        return fail(409, "Ce groupe a déjà déposé un rendu ou un rapport : il ne peut pas être supprimé")
+      }
+      db.groups = db.groups.filter((g) => g.id !== group.id)
+      db.defenses = db.defenses.filter((d) => d.groupId !== group.id)
+      persist()
+      return ok()
+    }
+
     if (route === "/deliverables" && method === "POST") {
       assertOwnsProject(db, requireTeacher(db, init, headers), Number(body.projectId))
       const deliverable: DemoDeliverable = {

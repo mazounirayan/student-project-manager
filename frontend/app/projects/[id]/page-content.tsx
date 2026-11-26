@@ -1,11 +1,15 @@
 "use client"
 
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { MainLayout } from "@/components/layout/main-layout"
+import { PageContainer, PageHeader } from "@/components/layout/page"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Users, FileText, BookOpen, Download, AlertCircle, Calendar, Plus } from "lucide-react"
+import { ArrowLeft, Download, AlertCircle, Calendar, Eye, EyeOff, FileText, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
 import { useEffect, useMemo, useState, useCallback } from "react"
 import GroupsBoard from "@/components/groups/GroupsBoard"
 import { DeliverableDialog, type DeliverableFormValues } from "@/components/projects/deliverable-dialog"
@@ -22,10 +26,14 @@ import { TeacherReportsView } from "@/components/reports/TeacherReportsView"
 import { DefenseGradingPanel } from "@/components/grading/DefenseGradingPanel"
 import { ErrorState } from "@/components/shared/ErrorState"
 import { DetailSkeleton } from "@/components/shared/Skeletons"
-import { getProjectById, type Project } from "@/services/project.service"
-import { formatDate, formatDateLong } from "@/lib/format"
+import { deleteProject, getProjectById, updateProject, type Project, type UpdateProjectPayload } from "@/services/project.service"
+import { promotionService, type Promotion } from "@/services/PromotionService"
+import { formatDate, formatDateLong, plural } from "@/lib/format"
 import { toast } from "sonner"
 import { ProjectStatusBadge } from "@/components/projects/project-status-badge"
+import { EditProjectDialog } from "@/components/projects/edit-project-dialog"
+import { ProjectOverview } from "@/components/projects/project-overview"
+import { confirmDeleteProject, confirmVisibility, groupsOf, studentsOf, ungroupedStudents, type ChecklistAction } from "@/lib/projects"
 import { useRouteProjectId } from "@/lib/routes"
 
 interface ProjectPageProps {
@@ -45,7 +53,14 @@ type Defense = {
   location?: string | null
 }
 
+const TABS = ["overview", "groups", "deliverables", "reports", "defenses", "grading"] as const
+type TabValue = (typeof TABS)[number]
+
 export function ProjectPageContent({ params }: ProjectPageProps) {
+  const router = useRouter()
+  const [tab, setTab] = useState<TabValue>("overview")
+  const [editOpen, setEditOpen] = useState(false)
+  const [promotions, setPromotions] = useState<Promotion[]>([])
   const [project, setProject] = useState<Project | null>(null)
   const [defenses, setDefenses] = useState<Defense[]>([])
   const [loading, setLoading] = useState(true)
@@ -74,6 +89,17 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
   useEffect(() => {
     loadProject()
   }, [loadProject])
+
+  // L’onglet ouvert est repris dans l’adresse (#groups), pour partager ou retrouver la page telle quelle.
+  useEffect(() => {
+    const fromHash = window.location.hash.slice(1) as TabValue
+    if (TABS.includes(fromHash)) setTab(fromHash)
+  }, [])
+
+  const changeTab = useCallback((value: string) => {
+    setTab(value as TabValue)
+    window.history.replaceState(null, "", `#${value}`)
+  }, [])
 
   const handleRefresh = useCallback(async () => {
     try {
@@ -202,10 +228,7 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
     }
   }, [projectId])
 
-  const students: Student[] = useMemo(
-    () => ((project as unknown as { promotion?: { students?: Student[] } })?.promotion?.students ?? []),
-    [(project as unknown as { promotion?: { students?: Student[] } })?.promotion?.students],
-  )
+  const students: Student[] = useMemo(() => (project ? studentsOf(project) : []), [project])
 
   const groups: Group[] = useMemo(
     () =>
@@ -223,22 +246,49 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
     [project?.groups, project?.maxGroupSize],
   )
 
-  const assignedIds = useMemo(() => new Set(groups.flatMap((g) => g.members.map((m) => m.id))), [groups])
+  const waitingCount = project ? ungroupedStudents(project).length : 0
 
-  const ungroupedStudents = useMemo(
-    () => students.filter((s) => !assignedIds.has(s.id)),
-    [students, assignedIds],
-  )
+  const openEdit = async () => {
+    if (promotions.length === 0) setPromotions(await promotionService.getAll().catch(() => [] as Promotion[]))
+    setEditOpen(true)
+  }
 
-  const stats = useMemo(
-    () => [
-      { title: "Étudiants", value: students.length, icon: Users },
-      { title: "Groupes", value: groups.length, icon: Users },
-      { title: "Livrables", value: (project?.deliverables ?? []).length, icon: FileText },
-      { title: "Rapports", value: (project?.reports ?? []).length, icon: BookOpen },
-    ],
-    [students.length, groups.length, project?.deliverables, project?.reports],
-  )
+  const saveProject = async (payload: UpdateProjectPayload) => {
+    if (!project) return
+    await updateProject(project.id, payload)
+    setEditOpen(false)
+    toast.success("Projet mis à jour.")
+    await handleRefresh()
+  }
+
+  const toggleVisibility = async () => {
+    if (!project) return
+    const makeVisible = project.status !== "visible"
+    if (!(await confirmVisibility(project, makeVisible))) return
+    try {
+      await updateProject(project.id, { status: makeVisible ? "visible" : "draft" })
+      toast.success(makeVisible ? "Le projet est visible par les étudiants." : "Le projet repasse en brouillon.")
+      await handleRefresh()
+    } catch (err) {
+      toast.error("Le statut du projet n’a pas changé.", { description: errorMessage(err, "Réessayez dans un instant.") })
+    }
+  }
+
+  const removeProject = async () => {
+    if (!project || !(await confirmDeleteProject(project))) return
+    try {
+      await deleteProject(project.id)
+      toast.success(`Projet « ${project.name} » supprimé.`)
+      router.push("/projects")
+    } catch (err) {
+      toast.error("Le projet n’a pas été supprimé.", { description: errorMessage(err, "Réessayez dans un instant.") })
+    }
+  }
+
+  const runChecklistAction = (action: ChecklistAction) => {
+    if (action === "publish") void toggleVisibility()
+    else changeTab(action)
+  }
 
   const getDeliverableStatus = (deliverable: { deadline: string }) => {
     const now = new Date()
@@ -256,9 +306,9 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
   if (loading) {
     return (
       <MainLayout>
-        <div className="p-6">
+        <PageContainer>
           <DetailSkeleton />
-        </div>
+        </PageContainer>
       </MainLayout>
     )
   }
@@ -266,61 +316,88 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
   if (error || !project) {
     return (
       <MainLayout>
-        <div className="p-6">
+        <PageContainer>
+          <BackToProjects />
           <ErrorState message={error ?? "Projet introuvable."} onRetry={loadProject} />
-        </div>
+        </PageContainer>
       </MainLayout>
     )
   }
 
   const deliverables = (project.deliverables ?? []) as Array<Record<string, any>>
 
+  const visible = project.status === "visible"
+
   return (
     <MainLayout>
-      <div className="p-6">
-        <div className="mb-6">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h1 className="text-3xl font-bold text-foreground">{project?.name}</h1>
-              <p className="flex flex-wrap items-center gap-2 text-muted-foreground">
-                <span>{project?.promotionName}</span>
-                <span aria-hidden="true">•</span>
-                <span>Créé le {formatDate(project?.createdAt)}</span>
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2"><ProjectStatusBadge status={project?.status} /></div>
+      <PageContainer>
+        <BackToProjects />
+        <PageHeader
+          title={project.name}
+          description={`${project.promotionName ?? "Promotion inconnue"} · ${plural(students.length, "étudiant")} · créé le ${formatDate(project.createdAt)}`}
+          actions={
+            <>
+              <ProjectStatusBadge status={project.status} />
+              {!visible && (
+                <Button onClick={toggleVisibility}>
+                  <Eye aria-hidden="true" className="h-4 w-4" />
+                  Rendre visible
+                </Button>
+              )}
+              <Button variant="outline" onClick={openEdit}>
+                <Pencil aria-hidden="true" className="h-4 w-4" />
+                Modifier
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" aria-label="Autres actions sur le projet">
+                    <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {visible && (
+                    <DropdownMenuItem onSelect={toggleVisibility}>
+                      <EyeOff aria-hidden="true" className="h-4 w-4" />
+                      Repasser en brouillon
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem variant="destructive" onSelect={removeProject}>
+                    <Trash2 aria-hidden="true" className="h-4 w-4" />
+                    Supprimer le projet
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          }
+        />
+
+        <Tabs value={tab} onValueChange={changeTab} className="space-y-4">
+          <div className="-mx-1 overflow-x-auto px-1 pb-1">
+            <TabsList className="w-max">
+              <TabsTrigger value="overview">Vue d’ensemble</TabsTrigger>
+              <TabsTrigger value="groups">
+                Groupes
+                {waitingCount > 0 && (
+                  <>
+                    <span aria-hidden="true" className="rounded-full bg-primary px-1.5 text-[11px] leading-4 tabular-nums text-primary-foreground">
+                      {waitingCount}
+                    </span>
+                    <span className="sr-only">({plural(waitingCount, "étudiant")} sans groupe)</span>
+                  </>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="deliverables">Livrables</TabsTrigger>
+              <TabsTrigger value="reports">Rapports</TabsTrigger>
+              <TabsTrigger value="defenses">Soutenances</TabsTrigger>
+              <TabsTrigger value="grading">Notation</TabsTrigger>
+            </TabsList>
           </div>
 
-          <p className="text-muted-foreground">{project?.description}</p>
-        </div>
-
-        <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-          {stats?.map((stat) => {
-            const Icon = stat.icon
-            return (
-              <Card key={stat.title}>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">{stat?.title}</CardTitle>
-                  <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stat?.value}</div>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-
-        <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList className="flex-wrap">
-            <TabsTrigger value="overview">Soutenance</TabsTrigger>
-            <TabsTrigger value="groups">Groupes</TabsTrigger>
-            <TabsTrigger value="deliverables">Livrables</TabsTrigger>
-            <TabsTrigger value="reports">Rapports</TabsTrigger>
-            <TabsTrigger value="grading">Notation</TabsTrigger>
-          </TabsList>
-
           <TabsContent value="overview">
+            <ProjectOverview project={project} onAction={runChecklistAction} />
+          </TabsContent>
+
+          <TabsContent value="defenses">
             <Card>
               <CardHeader>
                 <CardTitle>Ordre de passage</CardTitle>
@@ -348,7 +425,12 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
           </TabsContent>
 
           <TabsContent value="groups">
-            <GroupsBoard projectId={project?.id} initialUnassigned={ungroupedStudents} initialGroups={groups} />
+            <GroupsBoard
+              project={project}
+              students={students}
+              initialGroups={groupsOf(project)}
+              onGroupsChange={(next) => setProject((current) => (current ? { ...current, groups: next } : current))}
+            />
           </TabsContent>
 
           <TabsContent value="deliverables">
@@ -487,7 +569,21 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
           deliverable={deliverableDialog.deliverable}
           onSubmit={saveDeliverable}
         />
-      </div>
+
+        <EditProjectDialog open={editOpen} onOpenChange={setEditOpen} project={project} promotions={promotions} onSave={saveProject} />
+      </PageContainer>
     </MainLayout>
+  )
+}
+
+function BackToProjects() {
+  return (
+    <Link
+      href="/projects"
+      className="mb-4 inline-flex items-center gap-1 rounded-sm text-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+    >
+      <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+      Projets
+    </Link>
   )
 }

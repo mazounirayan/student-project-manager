@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from "@/lib/api"
+import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api"
 
 export type ProjectStatus = "draft" | "visible"
 export type GroupFormationRule = "manual" | "random" | "free"
@@ -52,6 +52,12 @@ export function getProjectById(id: number | string): Promise<Project> {
 
 export function createProject(payload: CreateProjectPayload): Promise<Project> {
   return apiPost<Project>("/projects", payload)
+}
+
+export type UpdateProjectPayload = Partial<CreateProjectPayload>
+
+export function updateProject(id: number, payload: UpdateProjectPayload): Promise<Project> {
+  return apiPut<Project>(`/projects/${id}`, payload)
 }
 
 export function deleteProject(id: number): Promise<void> {

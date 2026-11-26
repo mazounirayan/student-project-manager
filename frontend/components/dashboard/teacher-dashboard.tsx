@@ -152,7 +152,7 @@ function Overview({ data }: { data: TeacherOverview }) {
                 <RowLink
                   key={project.id}
                   href={projectPath("/projects", project.id)}
-                  aside={<Badge variant={project.status === "visible" ? "secondary" : "outline"}>{project.status === "visible" ? "Publié" : "Brouillon"}</Badge>}
+                  aside={<Badge variant={project.status === "visible" ? "secondary" : "outline"}>{project.status === "visible" ? "Visible" : "Brouillon"}</Badge>}
                 >
                   <span className="block text-sm font-medium">{project.name}</span>
                   <span className="block text-xs text-muted-foreground">{plural(project.groups.length, "groupe", "groupes")}</span>

@@ -307,7 +307,7 @@ export function buildStudentOverview(
           title: "Rejoindre ou créer un groupe",
           projectName: project.name,
           dueAt: project.groupFormationDeadline ?? null,
-          href: groupHref,
+          href: `${projectPath("/my-projects", project.id)}#groupes`,
         })
       }
       continue

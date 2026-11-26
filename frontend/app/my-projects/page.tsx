@@ -1,19 +1,24 @@
 "use client"
 
-import { projectPath } from "@/lib/routes"
+import Link from "next/link"
+import { useCallback, useEffect, useState } from "react"
+import { CalendarClock, FolderOpen, Users } from "lucide-react"
+import { ProtectedRoute } from "@/components/auth/protected-route"
 import { MainLayout } from "@/components/layout/main-layout"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { PageContainer, PageHeader } from "@/components/layout/page"
+import { DueBadge } from "@/components/shared/DueBadge"
+import { EmptyState } from "@/components/shared/EmptyState"
+import { ErrorState } from "@/components/shared/ErrorState"
+import { CardsSkeleton } from "@/components/shared/Skeletons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { BookOpen, Calendar, Users, Clock, FolderOpen } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import { ProtectedRoute } from "@/components/auth/protected-route"
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
+import { useAuth } from "@/contexts/auth-context"
+import { errorMessage } from "@/lib/api"
+import { formatDateTime, formatDayMonth, plural } from "@/lib/format"
+import { nextDeliverable, studentGroupState } from "@/lib/projects"
+import { projectPath } from "@/lib/routes"
 import { fetchMyProjects, type Project } from "@/services/project.service"
-import { ErrorState } from "@/components/shared/ErrorState"
-import { EmptyState } from "@/components/shared/EmptyState"
-import { CardsSkeleton } from "@/components/shared/Skeletons"
-import { daysUntil, formatDateTime } from "@/lib/format"
 
 export default function MyProjectsPage() {
   return (
@@ -24,10 +29,10 @@ export default function MyProjectsPage() {
 }
 
 function MyProjectsPageContent() {
+  const { user } = useAuth()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const router = useRouter()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -36,8 +41,7 @@ function MyProjectsPageContent() {
       const data = await fetchMyProjects()
       setProjects(Array.isArray(data) ? data : [])
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible de charger vos projets.")
-      setProjects([])
+      setError(errorMessage(err, "Impossible de charger vos projets."))
     } finally {
       setLoading(false)
     }
@@ -49,11 +53,8 @@ function MyProjectsPageContent() {
 
   return (
     <MainLayout>
-      <div className="p-6">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-foreground">Mes projets</h1>
-          <p className="text-muted-foreground">Suivez l’avancement de vos projets étudiants</p>
-        </div>
+      <PageContainer>
+        <PageHeader title="Mes projets" description="Les consignes, vos dates à retenir et votre groupe pour chaque projet." />
 
         {loading ? (
           <CardsSkeleton count={2} />
@@ -62,71 +63,110 @@ function MyProjectsPageContent() {
         ) : projects.length === 0 ? (
           <EmptyState
             icon={FolderOpen}
-            title="Aucun projet pour le moment"
-            description="Vos projets apparaîtront ici dès que votre enseignant en publiera un pour votre promotion."
+            title="Aucun projet pour l’instant"
+            description="Vos projets apparaîtront ici dès que votre enseignant en aura rendu un visible pour votre promotion."
           />
         ) : (
-          <div className="grid gap-6">
-            {projects.map((project) => {
-              const remaining = daysUntil(project.groupFormationDeadline)
-              const isUrgent = remaining !== null && remaining >= 0 && remaining <= 7
-              const groupCount = project.groups?.length ?? 0
-
-              return (
-                <Card key={project.id} className={`transition-shadow hover:shadow-md ${isUrgent ? "border-destructive/60" : ""}`}>
-                  <CardHeader>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <CardTitle className="flex items-center space-x-2 text-xl">
-                          <BookOpen aria-hidden="true" className="h-5 w-5" />
-                          <span>{project.name}</span>
-                        </CardTitle>
-                        <CardDescription className="flex flex-wrap items-center gap-2">
-                          <span className="flex items-center gap-1">
-                            <Users aria-hidden="true" className="h-3 w-3" />
-                            <span>{groupCount > 0 ? `${groupCount} groupe(s) formé(s)` : "Groupes à former"}</span>
-                          </span>
-                          <span aria-hidden="true">•</span>
-                          <span>{project.teacherName || "Enseignant"}</span>
-                        </CardDescription>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        {isUrgent && (
-                          <Badge variant="destructive" className="flex items-center space-x-1">
-                            <Clock aria-hidden="true" className="h-3 w-3" />
-                            <span>Imminent</span>
-                          </Badge>
-                        )}
-                        <Badge variant="secondary">{project.status === "visible" ? "En cours" : "Brouillon"}</Badge>
-                      </div>
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">{project.description}</p>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-                      <div className="flex items-center space-x-2">
-                        <Calendar aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                        <span>
-                          Constitution des groupes :{" "}
-                          {project.groupFormationDeadline ? formatDateTime(project.groupFormationDeadline) : "non définie"}
-                        </span>
-                      </div>
-                      {remaining !== null && remaining >= 0 && (
-                        <span className={`font-medium ${isUrgent ? "text-destructive" : "text-muted-foreground"}`}>
-                          {remaining > 0 ? `${remaining} jour${remaining > 1 ? "s" : ""} pour rejoindre un groupe` : "Dernier jour pour rejoindre un groupe"}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-4">
-                      <Button size="sm" onClick={() => router.push(projectPath("/my-projects", project.id))}>Voir détails</Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
-          </div>
+          <ul className="grid gap-4">
+            {projects.map((project) => (
+              <li key={project.id}>
+                <ProjectCard project={project} studentId={user?.id ?? 0} />
+              </li>
+            ))}
+          </ul>
         )}
-      </div>
+      </PageContainer>
     </MainLayout>
+  )
+}
+
+function ProjectCard({ project, studentId }: { project: Project; studentId: number }) {
+  const { group, state } = studentGroupState(project, studentId)
+  const deliverable = nextDeliverable(project)
+  const detail = projectPath("/my-projects", project.id)
+
+  return (
+    <Card className="gap-4">
+      <CardHeader>
+        <h2 data-slot="card-title" className="leading-snug font-semibold">
+          <Link href={detail} className="rounded-sm hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+            {project.name}
+          </Link>
+        </h2>
+        <CardDescription>{project.teacherName ? `Enseignant : ${project.teacherName}` : "Projet de votre promotion"}</CardDescription>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        {project.description && <p className="line-clamp-2 text-sm text-muted-foreground">{project.description}</p>}
+
+        <dl className="grid gap-3 text-sm sm:grid-cols-2">
+          <div className="flex items-start gap-2">
+            <Users aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="space-y-1">
+              <dt className="sr-only">Votre groupe</dt>
+              <dd>
+                {group ? (
+                  <>
+                    <Badge variant="secondary">{group.name}</Badge>{" "}
+                    <span className="text-muted-foreground">{plural(group.members.length, "membre")}</span>
+                  </>
+                ) : state === "can-join" ? (
+                  <span className="font-medium">Vous n’avez pas encore de groupe</span>
+                ) : state === "waiting" ? (
+                  <span className="text-muted-foreground">Votre enseignant constitue les groupes</span>
+                ) : (
+                  <span className="font-medium">Vous n’avez pas de groupe : contactez votre enseignant</span>
+                )}
+              </dd>
+              {!group && state === "can-join" && project.groupFormationDeadline && (
+                <dd className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  Jusqu’au {formatDateTime(project.groupFormationDeadline)}
+                  <DueBadge date={project.groupFormationDeadline} />
+                </dd>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2">
+            <CalendarClock aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="space-y-1">
+              <dt className="sr-only">Prochaine échéance</dt>
+              <dd>
+                {deliverable ? (
+                  <>
+                    <span className="font-medium">{deliverable.name}</span>
+                    <span className="text-muted-foreground"> · {formatDayMonth(deliverable.deadline)}</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">Aucune échéance à venir</span>
+                )}
+              </dd>
+              {deliverable && (
+                <dd>
+                  <DueBadge date={deliverable.deadline} />
+                </dd>
+              )}
+            </div>
+          </div>
+        </dl>
+
+        <div className="flex flex-wrap gap-2">
+          {state === "can-join" ? (
+            <Button asChild>
+              <Link href={`${detail}#groupes`}>Rejoindre ou créer un groupe</Link>
+            </Button>
+          ) : (
+            <Button asChild>
+              <Link href={group ? projectPath("/my-projects", project.id, "/group") : detail}>{group ? "Ouvrir l’espace du groupe" : "Voir le projet"}</Link>
+            </Button>
+          )}
+          {(group || state === "can-join") && (
+            <Button asChild variant="outline">
+              <Link href={detail}>Consignes et dates</Link>
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }

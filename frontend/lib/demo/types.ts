@@ -35,7 +35,7 @@ export interface DemoProject {
   minGroupSize: number
   maxGroupSize: number
   groupFormationRule: "manual" | "random" | "free"
-  groupFormationDeadline: string
+  groupFormationDeadline: string | null
   promotionId: number
   teacherId: number
   createdAt: string

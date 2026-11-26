@@ -1,377 +1,499 @@
-'use client'
+"use client"
 
-import { useMemo, useRef, useState } from 'react'
+import Link from "next/link"
+import { useMemo, useRef, useState, type ReactNode } from "react"
 import {
-  DndContext, DragOverlay, closestCorners,
-  PointerSensor, KeyboardSensor, useSensor, useSensors,
-  type DragEndEvent, useDroppable,
-} from '@dnd-kit/core'
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { dndTransform } from '@/lib/utils'
-import { Plus, Shuffle } from 'lucide-react'
-import { cn } from '@/lib/utils'
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  pointerWithin,
+  rectIntersection,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type Announcements,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragStartEvent,
+  type KeyboardCoordinateGetter,
+} from "@dnd-kit/core"
+import { FolderInput, GripVertical, Plus, Search, Shuffle, Trash2, UserMinus } from "lucide-react"
 import { toast } from "sonner"
-import { GroupSavePayload, saveProjectGrouping } from '@/services/groups.service'
+import { QuietEmpty } from "@/components/dashboard/parts"
+import { EmptyState } from "@/components/shared/EmptyState"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import { errorMessage } from "@/lib/api"
+import { confirmAction } from "@/lib/dialogs"
+import { formatDateTime, plural } from "@/lib/format"
+import { moveStudent, planAutoDistribution } from "@/lib/groups"
+import { fullName, initials, matchesQuery } from "@/lib/people"
+import { formationClosed, groupFill, groupSizeLabel, isFreeFormation, maxGroupSize, type ProjectGroup, type ProjectPerson } from "@/lib/projects"
+import { cn } from "@/lib/utils"
+import { createGroup, deleteGroup, saveProjectGrouping } from "@/services/groups.service"
+import type { Project } from "@/services/project.service"
 
-type Student = { id: number; firstName: string; lastName: string; email: string; avatarUrl?: string; meta?: string }
-type Group   = { id: number; name: string; capacity: number; members: Student[] }
+const UNASSIGNED = "unassigned"
+const studentKey = (id: number) => `s-${id}`
+const groupKey = (id: number) => `g-${id}`
 
-const UNASSIGNED_ID = 'unassigned'
-const sid = (id: number) => `s-${id}`
-const gid = (id: number) => `g-${id}`
+type SaveState = "idle" | "saving" | "saved" | "error"
 
-const Avatar = ({ s }: { s: Student }) => (
-  <div className="flex size-8 shrink-0 items-center justify-center rounded bg-muted text-[11px] uppercase">
-    {s.lastName?.[0]}{s.firstName?.[0]}
-  </div>
-)
-
-function StudentRow({ s, selected = false }: { s: Student; selected?: boolean }) {
-  return (
-    <div className={cn(
-      'flex items-center gap-2 rounded border bg-card px-2 py-1',
-      'hover:bg-muted',
-      selected && 'bg-primary/15 ring-1 ring-primary'
-    )}>
-      <Avatar s={s} />
-      <div className="leading-tight">
-        <div className="text-[12px] font-semibold uppercase">
-          {s.lastName} <span className="normal-case">{s.firstName}</span>
-        </div>
-        {s.meta && <div className="text-[11px] text-primary font-semibold tracking-tight">{s.meta}</div>}
-      </div>
-    </div>
-  )
+interface GroupsBoardProps {
+  project: Project
+  /** Tous les étudiants de la promotion du projet. */
+  students: ProjectPerson[]
+  initialGroups: ProjectGroup[]
+  /** Appelé après chaque enregistrement réussi, pour tenir à jour les compteurs de la page. */
+  onGroupsChange?: (groups: ProjectGroup[]) => void
 }
 
-function DraggableStudent({ s, selected = false }: { s: Student; selected?: boolean }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: sid(s.id),
-    data: { type: 'student', studentId: s.id },
-  })
-  const style = { transform: dndTransform(transform), transition, opacity: isDragging ? .5 : 1 }
-  return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <StudentRow s={s} selected={selected}/>
-    </div>
-  )
-}
+export default function GroupsBoard({ project, students, initialGroups, onGroupsChange }: GroupsBoardProps) {
+  const maxSize = maxGroupSize(project)
+  const [groups, setGroups] = useState(initialGroups)
+  const savedGroups = useRef(initialGroups)
+  const [saveState, setSaveState] = useState<SaveState>("idle")
+  const [busy, setBusy] = useState(false)
+  const [announcement, setAnnouncement] = useState("")
+  const [query, setQuery] = useState("")
+  const [dragged, setDragged] = useState<ProjectPerson | null>(null)
 
-function DroppableBox({
-  droppableId, className, children,
-}: { droppableId: string; className?: string; children: React.ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id: droppableId })
-  return (
-    <div ref={setNodeRef} className={cn('rounded border border-dashed bg-card p-2', isOver && 'ring-2 ring-primary/40', className)}>
-      {children}
-    </div>
-  )
-}
+  const people = useMemo(() => new Map(students.map((student) => [student.id, student])), [students])
+  const unassigned = useMemo(() => {
+    const placed = new Set(groups.flatMap((group) => group.members.map((member) => member.id)))
+    return students.filter((student) => !placed.has(student.id))
+  }, [groups, students])
+  const shownUnassigned = useMemo(() => unassigned.filter((student) => matchesQuery(student, query)), [unassigned, query])
+  const groupOf = (studentId: number) => groups.find((group) => group.members.some((member) => member.id === studentId))
 
-export default function GroupsBoard({
-  projectId,
-  initialUnassigned,
-  initialGroups,
-}: {
-  projectId: number
-  initialUnassigned: Student[]
-  initialGroups: Group[]
-}) {
-
-  const [query, setQuery] = useState('')
-  const [selectedUnassignedId, setSelectedUnassignedId] = useState<number | null>(null)
-  const [activeStudentId, setActiveStudentId] = useState<number | null>(null)
-  const [unassigned, setUnassigned] = useState<Student[]>(initialUnassigned)
-  const [groups, setGroups] = useState<Group[]>(initialGroups)
-  const [saving, setSaving] = useState<"idle"|"pending"|"ok"|"error">("idle")
-  const saveTimer = useRef<number | null>(null)
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor)
-  )
-
-  const all = useMemo(() => {
-    const m = new Map<number, Student>()
-    unassigned.forEach(s => m.set(s.id, s))
-    groups.forEach(g => g.members.forEach(s => m.set(s.id, s)))
-    return m
-  }, [unassigned, groups])
-
-  const containers = useMemo(() => {
-    const map = new Map<string, number[]>()
-    map.set(UNASSIGNED_ID, unassigned?.map(s => s.id))
-    groups.forEach(g => map.set(gid(g.id), g.members?.map(s => s.id)))
-    return map
-  }, [unassigned, groups])
-
-  const findContainerByStudent = (id: number) => {
-    for (const [cid, ids] of containers.entries()) if (ids.includes(id)) return cid
-  }
-
-  const scheduleSave = (nextUnassigned: Student[], nextGroups: Group[]) => {
-    if (saveTimer.current) window.clearTimeout(saveTimer.current)
-    saveTimer.current = window.setTimeout(async () => {
-      try {
-        setSaving("pending")
-        const payload: GroupSavePayload = {
-          groups: nextGroups?.map(g => ({ id: g.id, memberIds: g.members?.map(m => m.id) })),
-          unassignedIds: nextUnassigned?.map(s => s.id),
-        }
-        const res = await saveProjectGrouping(projectId, payload)
-        setSaving("ok")
-        toast.success("Groupes enregistrés", { description: res?.message ?? "La répartition a été sauvegardée." })
-      } catch (e:any) {
-        setSaving("error")
-        toast.error("Échec de sauvegarde", { description: e?.message ?? "Réessayez." })
-      }
-    }, 600) as unknown as number
-  }
-
-  const setFromLists = (unassignedIds: number[], byGroupIds: Record<number, number[]>) => {
-    const nextUnassigned = unassignedIds?.map(id => all.get(id)!).filter(Boolean)
-    const nextGroups = groups?.map(g => ({
-      ...g,
-      members: (byGroupIds[g.id] ?? [])?.map(id => all.get(id)!).filter(Boolean),
-    }))
-    setUnassigned(nextUnassigned)
-    setGroups(nextGroups)
-    scheduleSave(nextUnassigned, nextGroups)
-  }
-
- const snapshotLists = () => {
-  const u = [...(containers.get(UNASSIGNED_ID) ?? [])]
-  const byG: Record<number, number[]> = {}
-  groups.forEach(g => byG[g.id] = [...(containers.get(gid(g.id)) ?? [])])
-  return { u, byG }
-}
-  const onDragStart = (e: any) => {
-    const id = String(e.active.id)
-    if (id.startsWith('s-')) setActiveStudentId(Number(id.slice(2)))
-  }
-  const onDragEnd = (e: DragEndEvent) => {
-    const active = String(e.active.id)
-    const over = e.over ? String(e.over.id) : undefined
-    setActiveStudentId(null)
-    if (!over || !active.startsWith('s-')) return
-
-    const studentId = Number(active.slice(2))
-    const from = findContainerByStudent(studentId)
-
-    let to: string | undefined
-    if (over === UNASSIGNED_ID || over.startsWith('g-')) to = over
-    else if (over.startsWith('s-')) {
-      const overStudentId = Number(over.slice(2))
-      to = findContainerByStudent(overStudentId)
+  /** Enregistre la répartition ; en cas d’échec, revient à la dernière répartition enregistrée. */
+  const persist = async (next: ProjectGroup[], message: string): Promise<boolean> => {
+    setGroups(next)
+    setBusy(true)
+    setSaveState("saving")
+    try {
+      await saveProjectGrouping(project.id, {
+        groups: next.map((group) => ({ id: group.id, memberIds: group.members.map((member) => member.id) })),
+        unassignedIds: [],
+      })
+      savedGroups.current = next
+      setSaveState("saved")
+      setAnnouncement(message)
+      onGroupsChange?.(next)
+      return true
+    } catch (err) {
+      setGroups(savedGroups.current)
+      setSaveState("error")
+      toast.error("La répartition n’a pas été enregistrée.", { description: errorMessage(err, "Réessayez dans un instant.") })
+      return false
+    } finally {
+      setBusy(false)
     }
-    if (!from || !to || from === to) return
-
-    if (to.startsWith('g-')) {
-      const groupId = Number(to.slice(2))
-      const grp = groups?.find(g => g.id === groupId)!
-      const size = (containers.get(to) ?? []).length
-      if (size >= grp.capacity) {
-        toast.error(`${grp.name} est complet`, { description: `Capacité atteinte (${grp.capacity}/${grp.capacity}).` })
-        return
-      }
-    }
-
-    const { u, byG } = snapshotLists()
-    const removeFrom = (cid:string) => {
-      if (cid === UNASSIGNED_ID) {
-        const i = u.indexOf(studentId); if (i>-1) u.splice(i,1)
-      } else {
-        const gidNum = Number(cid.slice(2))
-        byG[gidNum] = (byG[gidNum] ?? []).filter(id => id !== studentId)
-      }
-    }
-    const addTo = (cid:string) => {
-      if (cid === UNASSIGNED_ID) u.push(studentId)
-      else {
-        const gidNum = Number(cid.slice(2))
-        byG[gidNum] = [ ...(byG[gidNum] ?? []), studentId ]
-      }
-    }
-    removeFrom(from); addTo(to)
-    setFromLists(u, byG)
   }
 
-  const joinGroup = (groupId:number) => {
-    if (!selectedUnassignedId) return
-    const grp = groups?.find(g => g.id === groupId)!
-    if (grp.members.length >= grp.capacity) {
-      toast.error(`${grp.name} est complet`, { description: `Capacité atteinte (${grp.capacity}/${grp.capacity}).` })
+  const place = (student: ProjectPerson, targetGroupId: number | null) => {
+    if (busy) return
+    const target = groups.find((group) => group.id === targetGroupId)
+    if (targetGroupId !== null && !target) return
+    if (target && target.members.some((member) => member.id === student.id)) return
+    if (target && target.members.length >= maxSize) {
+      toast.error(`${target.name} est complet.`, { description: `La taille maximale est de ${plural(maxSize, "étudiant")} par groupe.` })
       return
     }
-    const { u, byG } = snapshotLists()
-    const idx = u.indexOf(selectedUnassignedId)
-    if (idx > -1) u.splice(idx,1)
-    byG[groupId] = [ ...(byG[groupId] ?? []), selectedUnassignedId ]
-    setFromLists(u, byG)
-    setSelectedUnassignedId(null)
-  }
-
-  const shuffle = <T,>(arr:T[]) => {
-    const a = [...arr]; for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] }
-    return a
-  }
-const autoFormGroups = () => {
-  const totalCapacity = groups.reduce((sum, g) => sum + (g.capacity - g.members.length), 0)
-  
-  if (unassigned.length === 0) {
-    toast.info("Aucun étudiant à placer", { description: "La liste de gauche est vide." })
-    return
-  }
-  
-  if (totalCapacity < unassigned.length) {
-    toast.error("Capacité insuffisante", { description: `Places restantes: ${totalCapacity}, à placer: ${unassigned.length}.` })
-    return
-  }
-  
-  const pool = shuffle(unassigned.map(s => s.id))
-  const byG: Record<number, number[]> = {}
-  groups.forEach(g => byG[g.id] = [...g.members.map(m => m.id)])
-  
-  let placed = 0
-  while (pool.length > 0) {
-    let progress = false
-    for (const g of groups) {
-      if (byG[g.id].length < g.capacity && pool.length > 0) {
-        byG[g.id].push(pool.shift()!)
-        placed++
-        progress = true
-      }
-    }
-    if (!progress) break
-  }
-  
-  setFromLists(pool, byG)
-  toast.success("Groupes formés", { description: `${placed} étudiants affectés automatiquement.` })
-}
-
-const unassignedFiltered = useMemo(()=>{
-  const q = query.trim().toLowerCase()
-  if (!q) return unassigned
-  return unassigned.filter(s =>
-      s.firstName.toLowerCase().includes(q) ||
-      s.lastName.toLowerCase().includes(q) ||
-      s.email.toLowerCase().includes(q)
+    void persist(
+      moveStudent(groups, student, targetGroupId),
+      target ? `${fullName(student)} est dans ${target.name}.` : `${fullName(student)} n’a plus de groupe.`,
     )
-  },[query, unassigned])
+  }
 
-  const toggleSelectLeft = (id:number) => setSelectedUnassignedId(prev => prev===id ? null : id)
+  const addGroup = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const created = await createGroup(project.id)
+      const next = [...groups, { ...created, members: [] }]
+      setGroups(next)
+      savedGroups.current = [...savedGroups.current, { ...created, members: [] }]
+      onGroupsChange?.(savedGroups.current)
+      setAnnouncement(`${created.name} ajouté.`)
+    } catch (err) {
+      toast.error("Le groupe n’a pas été créé.", { description: errorMessage(err, "Réessayez dans un instant.") })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeGroup = async (group: ProjectGroup) => {
+    if (busy) return
+    const confirmed = await confirmAction({
+      title: `Supprimer le groupe « ${group.name} » ?`,
+      description: "Le groupe est vide. Vous pourrez en créer un nouveau à tout moment.",
+      confirmText: "Supprimer le groupe",
+      destructive: true,
+    })
+    if (!confirmed) return
+    setBusy(true)
+    try {
+      await deleteGroup(group.id)
+      savedGroups.current = savedGroups.current.filter((item) => item.id !== group.id)
+      setGroups((current) => current.filter((item) => item.id !== group.id))
+      onGroupsChange?.(savedGroups.current)
+      setAnnouncement(`${group.name} supprimé.`)
+    } catch (err) {
+      toast.error("Le groupe n’a pas été supprimé.", { description: errorMessage(err, "Réessayez dans un instant.") })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const autoDistribute = async () => {
+    if (busy || unassigned.length === 0) return
+    const plan = planAutoDistribution(unassigned, groups, maxSize)
+    const confirmed = await confirmAction({
+      title: `Répartir ${plural(unassigned.length, "étudiant")} au hasard ?`,
+      description:
+        "Ils sont placés à parts égales dans les groupes qui ont de la place." +
+        (plan.newGroups > 0
+          ? ` Les places restantes ne suffisent pas : ${plural(plan.newGroups, "nouveau groupe sera créé", "nouveaux groupes seront créés")}.`
+          : "") +
+        " Les groupes déjà constitués ne changent pas, et vous pourrez ensuite déplacer chaque étudiant.",
+      confirmText: "Répartir",
+    })
+    if (!confirmed) return
+
+    setBusy(true)
+    let all = groups
+    try {
+      for (let i = 0; i < plan.newGroups; i++) {
+        const created = await createGroup(project.id)
+        all = [...all, { ...created, members: [] }]
+        savedGroups.current = [...savedGroups.current, { ...created, members: [] }]
+      }
+    } catch (err) {
+      setGroups(savedGroups.current)
+      toast.error("Les nouveaux groupes n’ont pas été créés.", { description: errorMessage(err, "Réessayez dans un instant.") })
+      setBusy(false)
+      return
+    }
+
+    const next = all.map((group, slot) => ({
+      ...group,
+      members: [...group.members, ...plan.placements.filter((placement) => placement.slot === slot).map((placement) => placement.student)],
+    }))
+    const summary = `${plural(plan.placements.length, "étudiant réparti", "étudiants répartis")}.`
+    if (await persist(next, summary)) toast.success(summary)
+  }
+
+  // --- Glisser-déposer : souris, doigt (poignée sans défilement) et clavier (flèches entre les zones) ---
+  const orderedZones = [UNASSIGNED, ...groups.map((group) => groupKey(group.id))]
+  const zonesRef = useRef(orderedZones)
+  zonesRef.current = orderedZones
+
+  const keyboardGetter: KeyboardCoordinateGetter = (event, { context: { droppableRects, collisionRect } }) => {
+    const direction = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.code as "ArrowDown"]
+    if (!direction || !collisionRect) return undefined
+    event.preventDefault()
+    const zones = zonesRef.current
+    const centerY = collisionRect.top + collisionRect.height / 2
+    const centerX = collisionRect.left + collisionRect.width / 2
+    let current = 0
+    let best = Infinity
+    zones.forEach((id, index) => {
+      const rect = droppableRects.get(id)
+      if (!rect) return
+      const distance = Math.hypot(rect.left + rect.width / 2 - centerX, rect.top + rect.height / 2 - centerY)
+      if (distance < best) {
+        best = distance
+        current = index
+      }
+    })
+    const target = droppableRects.get(zones[Math.min(zones.length - 1, Math.max(0, current + direction))])
+    return target ? { x: target.left + 8, y: target.top + 8 } : undefined
+  }
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: keyboardGetter }),
+  )
+  const collisionDetection: CollisionDetection = (args) => (args.pointerCoordinates ? pointerWithin(args) : rectIntersection(args))
+
+  const studentOf = (id: unknown) => {
+    const key = String(id)
+    return key.startsWith("s-") ? people.get(Number(key.slice(2))) : undefined
+  }
+  const zoneName = (id: unknown) => {
+    const key = String(id)
+    if (key === UNASSIGNED) return "la liste des étudiants sans groupe"
+    return groups.find((group) => groupKey(group.id) === key)?.name ?? "un groupe"
+  }
+
+  const announcements: Announcements = {
+    onDragStart: ({ active }) => `${fullName(studentOf(active.id) ?? { firstName: "", lastName: "" })} est saisi. Flèches pour changer de zone, Espace pour déposer.`,
+    onDragOver: ({ active, over }) => (over ? `${fullName(studentOf(active.id) ?? { firstName: "", lastName: "" })} est au-dessus de ${zoneName(over.id)}.` : undefined),
+    onDragEnd: ({ active, over }) => (over ? `${fullName(studentOf(active.id) ?? { firstName: "", lastName: "" })} est déposé dans ${zoneName(over.id)}.` : "Dépôt annulé."),
+    onDragCancel: () => "Déplacement annulé.",
+  }
+
+  const handleDragStart = (event: DragStartEvent) => setDragged(studentOf(event.active.id) ?? null)
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setDragged(null)
+    const student = studentOf(event.active.id)
+    const over = event.over ? String(event.over.id) : null
+    if (!student || !over) return
+    if (over === UNASSIGNED) {
+      if (groupOf(student.id)) place(student, null)
+    } else if (over.startsWith("g-")) {
+      place(student, Number(over.slice(2)))
+    }
+  }
+
+  // --- Rendu ---
+  if (students.length === 0) {
+    return (
+      <EmptyState
+        title="Aucun étudiant dans cette promotion"
+        description="Ajoutez les étudiants à la promotion pour pouvoir les répartir en groupes."
+        action={
+          <Button asChild>
+            <Link href="/promotions">Aller aux promotions</Link>
+          </Button>
+        }
+      />
+    )
+  }
+
+  const free = isFreeFormation(project)
+  const closed = formationClosed(project)
 
   return (
-    <DndContext 
-      sensors={sensors} 
-      collisionDetection={closestCorners} 
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+    <DndContext
+      sensors={sensors}
+      collisionDetection={collisionDetection}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setDragged(null)}
+      accessibility={{
+        announcements,
+        screenReaderInstructions: {
+          draggable:
+            "Pour déplacer cet étudiant, appuyez sur Espace, changez de zone avec les flèches, puis déposez-le avec Espace ou annulez avec Échap. Le bouton « Déplacer vers » propose la même action sous forme de menu.",
+        },
+      }}
     >
-      <div className="grid gap-3 lg:grid-cols-[300px_1fr]">
-        <div className="rounded border bg-muted">
-          <div className="rounded-t bg-primary px-3 py-2 text-white text-sm font-semibold flex flex-wrap items-center justify-between">
-            <span>Liste des étudiants</span>
-            <span className="text-[11px] bg-card/20 px-2 py-0.5 rounded">{unassigned.length}</span>
+      <div className="space-y-4" aria-busy={busy}>
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+          <div className="min-w-0 flex-[1_1_26rem] space-y-1">
+            <p className="text-sm font-medium tabular-nums">
+              {plural(students.length, "étudiant")} · {plural(groups.length, "groupe")} ·{" "}
+              <span className={cn(unassigned.length > 0 && "text-primary")}>{unassigned.length === 0 ? "tous placés" : `${unassigned.length} sans groupe`}</span>
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {groupSizeLabel(project)}.{" "}
+              {free
+                ? closed
+                  ? "Formation libre, terminée : les étudiants ne peuvent plus changer de groupe."
+                  : `Formation libre : les étudiants peuvent aussi rejoindre ou quitter un groupe${project.groupFormationDeadline ? ` jusqu’au ${formatDateTime(project.groupFormationDeadline)}` : ""}.`
+                : "Seul vous placez les étudiants."}
+              {project.status === "draft" && " Le projet est en brouillon : les étudiants ne voient pas encore les groupes."}
+            </p>
           </div>
-
-          <div className="p-2 flex flex-wrap items-center gap-2">
-            <input
-              className="h-8 w-full rounded border px-2 text-sm"
-              placeholder="Rechercher…"
-              value={query}
-              onChange={(e)=>setQuery(e.target.value)}
-            />
-            <span className={cn(
-              "text-xs px-2 py-1 rounded border",
-              saving==="pending" && "border-amber-400 text-amber-600",
-              saving==="ok" && "border-emerald-400 text-emerald-600",
-              saving==="error" && "border-red-400 text-red-600"
-            )}>
-              {saving==="pending" ? "Enregistrement…" : saving==="ok" ? "Enregistré" : saving==="error" ? "Erreur" : "Prêt"}
+          <div className="flex flex-wrap items-center gap-2">
+            <span role="status" aria-live="polite" className="text-right text-sm text-muted-foreground empty:hidden">
+              {saveState === "saving" ? "Enregistrement…" : saveState === "saved" ? "Modifications enregistrées" : saveState === "error" ? "Non enregistré" : ""}
             </span>
-          </div>
-
-          <div className="p-2 pt-0">
-            <SortableContext items={unassignedFiltered?.map(s=>sid(s.id))} strategy={verticalListSortingStrategy}>
-              <DroppableBox droppableId={UNASSIGNED_ID} className="min-h-[420px] max-h-[calc(100vh-220px)] overflow-y-auto space-y-1">
-                {unassignedFiltered.length === 0
-                  ? <div className="text-[12px] text-muted-foreground">Aucun étudiant</div>
-                  : unassignedFiltered?.map(s => (
-                      <div key={s.id} onClick={()=>toggleSelectLeft(s.id)}>
-                        <DraggableStudent s={s} selected={selectedUnassignedId===s.id}/>
-                      </div>
-                    ))
-                }
-              </DroppableBox>
-            </SortableContext>
+            <Button variant="outline" onClick={addGroup} disabled={busy}>
+              <Plus aria-hidden="true" className="h-4 w-4" />
+              Ajouter un groupe
+            </Button>
+            <Button onClick={autoDistribute} disabled={busy || unassigned.length === 0}>
+              <Shuffle aria-hidden="true" className="h-4 w-4" />
+              {unassigned.length > 0 ? `Répartir les ${unassigned.length} restants` : "Répartir les restants"}
+            </Button>
           </div>
         </div>
 
-        <div className="space-y-2">
-          <button
-            className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm text-primary hover:bg-primary/10"
-            onClick={autoFormGroups}
-            title="Former automatiquement (aléatoire, respecte la capacité)"
-          >
-            <Shuffle className="h-4 w-4"/> Former les groupes automatiquement
-          </button>
+        <div className="grid items-start gap-4 lg:grid-cols-[19rem_minmax(0,1fr)]">
+          <Zone id={UNASSIGNED} className="lg:sticky lg:top-4">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="font-semibold">Sans groupe</h3>
+              <Badge variant={unassigned.length > 0 ? "default" : "secondary"} className="tabular-nums">
+                {unassigned.length}
+              </Badge>
+            </div>
+            {unassigned.length > 0 && (
+              <div className="relative mt-3">
+                <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input type="search" aria-label="Rechercher un étudiant sans groupe" placeholder="Rechercher" className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)} />
+              </div>
+            )}
+            <div className="mt-3">
+              {unassigned.length === 0 ? (
+                <QuietEmpty done>Tous les étudiants ont un groupe.</QuietEmpty>
+              ) : shownUnassigned.length === 0 ? (
+                <QuietEmpty>Aucun étudiant sans groupe ne correspond à « {query} ».</QuietEmpty>
+              ) : (
+                <ul className="max-h-80 space-y-1.5 overflow-y-auto pr-1 lg:max-h-[calc(100vh-18rem)]">
+                  {shownUnassigned.map((student) => (
+                    <StudentItem key={student.id} student={student} groups={groups} maxSize={maxSize} currentGroupId={null} disabled={busy} onMove={place} />
+                  ))}
+                </ul>
+              )}
+            </div>
+          </Zone>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {groups?.map(g=>{
-              const full = g.members.length >= g.capacity
-              return (
-                <div key={g.id} className="rounded border bg-card">
-                  <div className="rounded-t bg-primary px-3 py-1.5 text-white flex flex-wrap items-center justify-between">
-                    <div className="font-semibold text-sm">{g.name}</div>
-                    <div className="text-[11px] flex flex-wrap items-center gap-2">
-                      <span>{g.members.length}/{g.capacity}</span>
-                      {full && <span className="rounded bg-card/15 px-1.5 py-0.5">complet</span>}
-                    </div>
-                  </div>
-
-                  <div className="p-2">
-                    <SortableContext items={g.members?.map(s=>sid(s.id))} strategy={verticalListSortingStrategy}>
-                      <DroppableBox droppableId={gid(g.id)} className="min-h-20 bg-muted/50 p-2 divide-y">
-                        {g.members.length === 0
-                          ? <div className="text-[12px] text-muted-foreground">Aucun membre</div>
-                          : g.members?.map((s,i)=>(
-                              <div key={s.id} className={cn(i>0 && 'pt-2','pb-2')}>
-                                <DraggableStudent s={s}/>
-                              </div>
-                            ))
-                        }
-                      </DroppableBox>
-                    </SortableContext>
-
-                    <button
-                      className={cn(
-                        'mt-2 flex w-full items-center justify-center gap-2 rounded border px-2 py-1.5 text-sm',
-                        full || !selectedUnassignedId
-                          ? 'text-muted-foreground bg-muted/50 cursor-not-allowed'
-                          : 'text-primary hover:bg-primary/10'
-                      )}
-                      onClick={()=>joinGroup(g.id)}
-                      disabled={full || !selectedUnassignedId}
-                      title={full ? "Groupe complet" : (!selectedUnassignedId ? "Sélectionnez d’abord un étudiant à gauche" : "Ajouter l’étudiant sélectionné")}
-                    >
-                      <Plus className="h-4 w-4"/> Rejoindre le groupe
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+          {groups.length === 0 ? (
+            <EmptyState
+              title="Aucun groupe pour l’instant"
+              description="Ajoutez un groupe vide, ou répartissez les étudiants automatiquement : les groupes nécessaires sont alors créés pour vous."
+            />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {groups.map((group) => (
+                <GroupCard key={group.id} group={group} project={project} groups={groups} maxSize={maxSize} busy={busy} onMove={place} onDelete={() => removeGroup(group)} />
+              ))}
+            </div>
+          )}
         </div>
+
+        <p aria-live="polite" className="sr-only">
+          {announcement}
+        </p>
       </div>
 
-      <DragOverlay>
-        {activeStudentId ? (
-          <div className="rounded border bg-card px-2 py-1">
-            <StudentRow s={all.get(activeStudentId)!}/>
-          </div>
-        ) : null}
-      </DragOverlay>
+      <DragOverlay>{dragged ? <StudentCard student={dragged} floating /> : null}</DragOverlay>
     </DndContext>
+  )
+}
+
+/** Zone où l’on peut déposer un étudiant : surlignée pendant un survol. */
+function Zone({ id, className, children }: { id: string; className?: string; children: ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id })
+  return (
+    <section ref={setNodeRef} className={cn("rounded-xl border bg-card p-4 text-card-foreground shadow-sm transition-colors", isOver && "border-primary bg-primary/5 ring-2 ring-primary/30", className)}>
+      {children}
+    </section>
+  )
+}
+
+interface MoveHandlers {
+  groups: ProjectGroup[]
+  maxSize: number
+  disabled: boolean
+  onMove: (student: ProjectPerson, targetGroupId: number | null) => void
+}
+
+function GroupCard({ group, project, groups, maxSize, busy, onMove, onDelete }: Omit<MoveHandlers, "disabled"> & { group: ProjectGroup; project: Project; busy: boolean; onDelete: () => void }) {
+  const fill = groupFill(group, project)
+  return (
+    <Zone id={groupKey(group.id)}>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="font-semibold">{group.name}</h3>
+        <div className="flex items-center gap-1.5">
+          {fill === "full" && <Badge variant="secondary">Complet</Badge>}
+          {fill === "incomplete" && <Badge variant="outline">Incomplet · min. {project.minGroupSize}</Badge>}
+          <span className="text-sm tabular-nums text-muted-foreground" aria-label={`${group.members.length} étudiants sur ${maxSize} au maximum`}>
+            {group.members.length}/{maxSize}
+          </span>
+          {fill === "empty" && (
+            <Button variant="ghost" size="icon" className="-mr-2 h-8 w-8" aria-label={`Supprimer ${group.name}`} disabled={busy} onClick={onDelete}>
+              <Trash2 aria-hidden="true" className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+      <div className="mt-3">
+        {group.members.length === 0 ? (
+          <p className="rounded-md border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">Glissez un étudiant ici, ou utilisez « Déplacer vers ».</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {group.members.map((member) => (
+              <StudentItem key={member.id} student={member} groups={groups} maxSize={maxSize} currentGroupId={group.id} disabled={busy} onMove={onMove} />
+            ))}
+          </ul>
+        )}
+      </div>
+    </Zone>
+  )
+}
+
+function StudentItem({ student, currentGroupId, ...handlers }: MoveHandlers & { student: ProjectPerson; currentGroupId: number | null }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({ id: studentKey(student.id), disabled: handlers.disabled })
+  return (
+    <li ref={setNodeRef} className={cn(isDragging && "opacity-40")}>
+      <StudentCard
+        student={student}
+        handle={
+          <button
+            type="button"
+            ref={setActivatorNodeRef}
+            aria-label={`Glisser ${fullName(student)}`}
+            className="flex h-8 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring active:cursor-grabbing"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical aria-hidden="true" className="h-4 w-4" />
+          </button>
+        }
+        menu={<MoveMenu student={student} currentGroupId={currentGroupId} {...handlers} />}
+      />
+    </li>
+  )
+}
+
+function StudentCard({ student, handle, menu, floating = false }: { student: ProjectPerson; handle?: ReactNode; menu?: ReactNode; floating?: boolean }) {
+  return (
+    <div className={cn("flex items-center gap-1.5 rounded-md border bg-background py-1 pl-1 pr-1.5", floating && "shadow-lg")}>
+      {handle ?? <GripVertical aria-hidden="true" className="h-4 w-6 shrink-0 text-muted-foreground" />}
+      <Avatar className="h-7 w-7">
+        <AvatarFallback className="text-[11px]">{initials(student)}</AvatarFallback>
+      </Avatar>
+      <div className="min-w-0 flex-1 leading-tight">
+        <p className="truncate text-sm font-medium">{fullName(student)}</p>
+        <p className="truncate text-xs text-muted-foreground">{student.email}</p>
+      </div>
+      {menu}
+    </div>
+  )
+}
+
+/** Alternative au glisser-déposer : un menu pour envoyer l’étudiant dans un groupe (clavier, lecteur d’écran, téléphone). */
+function MoveMenu({ student, currentGroupId, groups, maxSize, disabled, onMove }: MoveHandlers & { student: ProjectPerson; currentGroupId: number | null }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={disabled} aria-label={`Déplacer ${fullName(student)} vers un groupe`}>
+          <FolderInput aria-hidden="true" className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-52">
+        <DropdownMenuLabel>Déplacer vers…</DropdownMenuLabel>
+        {groups.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">Aucun groupe : ajoutez-en un d’abord.</p>}
+        {groups.map((group) => {
+          const current = group.id === currentGroupId
+          const full = !current && group.members.length >= maxSize
+          return (
+            <DropdownMenuItem key={group.id} disabled={current || full} onSelect={() => onMove(student, group.id)}>
+              <span className="flex-1">{group.name}</span>
+              <span className="text-xs tabular-nums text-muted-foreground">{current ? "actuel" : full ? "complet" : `${group.members.length}/${maxSize}`}</span>
+            </DropdownMenuItem>
+          )
+        })}
+        {currentGroupId !== null && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onMove(student, null)}>
+              <UserMinus aria-hidden="true" className="h-4 w-4" />
+              Retirer du groupe
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

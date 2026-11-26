@@ -3,7 +3,7 @@ import { Readable } from 'stream';
 import csv from 'csv-parser';
 import * as XLSX from 'xlsx';
 import { AppDataSource } from '../database/data-source';
-import { Promotion, User } from '../entities/Entities';
+import { Group, Promotion, User } from '../entities/Entities';
 import { PasswordService } from '../utils/password.service';
 import { EmailService } from '../utils/email.service';
 import { HttpError, badRequest, conflict } from '../utils/http-error';
@@ -31,6 +31,7 @@ const LAST_NAME_HEADERS = ['nom', 'lastname', 'last_name'];
 
 const promotions = () => AppDataSource.getRepository(Promotion);
 const users = () => AppDataSource.getRepository(User);
+const groups = () => AppDataSource.getRepository(Group);
 
 const normalizeHeader = (header: string) =>
   header.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
@@ -119,10 +120,22 @@ export class PromotionService {
     await promotions().remove(promotion);
   }
 
+  /**
+   * Retire l'étudiant de la promotion et de tous les groupes de ses projets : un étudiant qui n'est plus
+   * dans la promotion ne doit plus figurer dans une équipe ni voir son projet. Son compte, et les rendus
+   * déjà déposés par ses anciens groupes, sont conservés.
+   */
   async removeStudent(promotionId: number, teacherId: number, studentId: number): Promise<Promotion> {
     const promotion = await findOwnedPromotion(promotionId, teacherId, ['students']);
     promotion.students = promotion.students.filter(student => student.id !== studentId);
-    return promotions().save(promotion);
+    const saved = await promotions().save(promotion);
+
+    // On charge tous les groupes de la promotion (et non ceux de l'étudiant) pour ne pas tronquer leurs membres à l'enregistrement.
+    const projectGroups = await groups().find({ where: { project: { promotion: { id: promotionId } } }, relations: ['members'] });
+    const affected = projectGroups.filter(group => group.members.some(member => member.id === studentId));
+    for (const group of affected) group.members = group.members.filter(member => member.id !== studentId);
+    if (affected.length > 0) await groups().save(affected);
+    return saved;
   }
 
   getPromotionsByTeacher(teacherId: number): Promise<Promotion[]> {

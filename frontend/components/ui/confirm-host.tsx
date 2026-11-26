@@ -1,6 +1,6 @@
 'use client'
 
-import { useSyncExternalStore } from 'react'
+import { useRef, useSyncExternalStore } from 'react'
 import { getConfirmRequest, settleConfirm, subscribeConfirm } from '@/lib/dialogs'
 import {
   AlertDialog,
@@ -17,10 +17,14 @@ import { cn } from '@/lib/utils'
 
 /** À monter une seule fois dans le layout : affiche les confirmations demandées par confirmAction(). */
 export function ConfirmHost() {
-  const request = useSyncExternalStore(subscribeConfirm, getConfirmRequest, () => null)
+  const current = useSyncExternalStore(subscribeConfirm, getConfirmRequest, () => null)
+  // Pendant l'animation de fermeture, la boîte garde le texte de la dernière demande au lieu de se vider.
+  const lastRequest = useRef(current)
+  if (current) lastRequest.current = current
+  const request = current ?? lastRequest.current
 
   return (
-    <AlertDialog open={request !== null} onOpenChange={(open) => !open && settleConfirm(false)}>
+    <AlertDialog open={current !== null} onOpenChange={(open) => !open && settleConfirm(false)}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{request?.title}</AlertDialogTitle>

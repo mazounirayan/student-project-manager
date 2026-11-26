@@ -1,8 +1,13 @@
 "use client"
 
-import { useRouteProjectId } from "@/lib/routes"
+import { projectPath, useRouteProjectId } from "@/lib/routes"
+import { fullName, initials } from "@/lib/people"
 import { BACKEND_URL, assertOk } from "@/lib/api"
+import Link from "next/link"
 import { MainLayout } from "@/components/layout/main-layout"
+import { PageContainer, PageHeader } from "@/components/layout/page"
+import { SectionCard } from "@/components/shared/SectionCard"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -184,9 +189,9 @@ export function GroupDetailsPageContent({ params }: GroupDetailsPageProps) {
   if (loading && !project) {
     return (
       <MainLayout>
-        <div className="p-6">
+        <PageContainer>
           <DetailSkeleton />
-        </div>
+        </PageContainer>
       </MainLayout>
     )
   }
@@ -194,59 +199,58 @@ export function GroupDetailsPageContent({ params }: GroupDetailsPageProps) {
   if (error || !project) {
     return (
       <MainLayout>
-        <div className="p-6">
+        <PageContainer>
+          <BackToProject projectId={projectId} />
           <ErrorState message={error ?? "Projet introuvable."} onRetry={load} />
-        </div>
+        </PageContainer>
       </MainLayout>
     )
   }
 
   return (
     <MainLayout>
-      <div className="p-6">
-        <div className="mb-6">
-          <Button variant="ghost" size="sm" className="mb-4" onClick={() => window.history.length > 1 ? window.history.back() : undefined}>
-            <ArrowLeft aria-hidden="true" className="mr-2 h-4 w-4" />
-            Retour au projet
-          </Button>
-          <h1 className="text-3xl font-bold text-foreground">{project.name}</h1>
-          <p className="mt-2 text-muted-foreground">{project.description}</p>
-        </div>
+      <PageContainer>
+        <BackToProject projectId={projectId} />
+        <PageHeader
+          title={project.name}
+          description={group ? `Espace de ${group.name} : livrables et rapport` : "Espace de votre groupe"}
+          actions={
+            <Button asChild variant="outline">
+              <Link href={projectPath("/my-projects", projectId)}>Consignes, dates et groupes</Link>
+            </Button>
+          }
+        />
 
         {!group ? (
           <EmptyState
             icon={Users}
-            title="Vous n’êtes pas encore dans un groupe pour ce projet"
-            description="Rejoignez un groupe depuis la page du projet pour accéder à cet espace."
+            title="Vous n’êtes pas dans un groupe pour ce projet"
+            description="Les livrables et le rapport se rendent au nom d’un groupe. Retrouvez sur la page du projet les groupes existants et ce qu’il vous reste à faire."
+            action={
+              <Button asChild>
+                <Link href={projectPath("/my-projects", projectId)}>Voir le projet</Link>
+              </Button>
+            }
           />
         ) : (
           <>
-            <Card className="mb-6">
-              <CardHeader>
-                <CardTitle className="flex flex-wrap items-center gap-2">
-                  <Users aria-hidden="true" className="h-5 w-5" />
-                  {group.name}
-                </CardTitle>
-                <CardDescription>Membres de votre groupe</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-3 md:grid-cols-3">
+            <div className="mb-6">
+              <SectionCard title={group.name} description="Membres de votre groupe">
+                <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {group.members?.map((member) => (
-                    <div key={member.id} className="flex flex-wrap items-center gap-3 rounded-lg border bg-card p-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-medium">
-                        {member.firstName?.charAt(0) ?? "?"}
-                      </div>
+                    <li key={member.id} className="flex items-center gap-3 rounded-lg border bg-card p-3">
+                      <Avatar className="h-9 w-9">
+                        <AvatarFallback className="text-xs">{initials(member)}</AvatarFallback>
+                      </Avatar>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">
-                          {member.firstName} {member.lastName}
-                        </p>
+                        <p className="truncate text-sm font-medium">{fullName(member)}</p>
                         <p className="truncate text-xs text-muted-foreground">{member.email}</p>
                       </div>
-                    </div>
+                    </li>
                   ))}
-                </div>
-              </CardContent>
-            </Card>
+                </ul>
+              </SectionCard>
+            </div>
 
             <Tabs defaultValue="deliverables" className="space-y-4">
               <TabsList>
@@ -445,7 +449,19 @@ export function GroupDetailsPageContent({ params }: GroupDetailsPageProps) {
             </Tabs>
           </>
         )}
-      </div>
+      </PageContainer>
     </MainLayout>
+  )
+}
+
+function BackToProject({ projectId }: { projectId: string }) {
+  return (
+    <Link
+      href={projectPath("/my-projects", projectId)}
+      className="mb-4 inline-flex items-center gap-1 rounded-sm text-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+    >
+      <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+      Retour au projet
+    </Link>
   )
 }
