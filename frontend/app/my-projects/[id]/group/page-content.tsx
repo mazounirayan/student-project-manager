@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Users, FileText, ArrowLeft } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { useAuth } from "@/contexts/auth-context"
+import { useDocumentTitle } from "@/hooks/use-document-title"
 import { errorMessage } from "@/lib/api"
 import { getProjectById, type Project } from "@/services/project.service"
 import { StudentDeliverableCard } from "@/components/deliverables/StudentDeliverableCard"
@@ -36,6 +37,7 @@ export function GroupDetailsPageContent({ params }: GroupDetailsPageProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState("deliverables")
+  useDocumentTitle(project ? `Espace du groupe · ${project.name}` : null)
 
   const load = useCallback(
     async (silent = false) => {

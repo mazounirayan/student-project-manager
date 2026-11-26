@@ -11,9 +11,10 @@ L'écran de connexion propose deux comptes fictifs, sans mot de passe :
 
 Pour faire le tour :
 
-1. Connectez-vous en étudiant et rendez le livrable « Code source de l'application ».
-2. Reconnectez-vous en enseignante : le rendu apparaît dans l'onglet Livrables du projet, où vous pouvez le noter.
-3. Une fois la note publiée, l'étudiant la retrouve dans « Mes notes ».
+1. Connectez-vous en étudiant et rendez le livrable « Code source de l'application » : les règles de conformité sont vérifiées avant l'envoi.
+2. Reconnectez-vous en enseignante : l'accueil et la page Livrables montrent le rendu, sa conformité et sa ressemblance avec les autres.
+3. Dans Évaluations, la note du Groupe 2 est validée mais pas encore publiée : publiez-la. Une note passe par brouillon, validée puis publiée, et l'étudiant ne voit que les notes publiées de son groupe dans « Mes notes ».
+4. La démo contient aussi une soutenance du jour : l'enseignante la suit dans l'onglet Soutenances du projet (passée, en cours, suivante) et la note après chaque passage, l'étudiant retrouve son créneau sur son accueil.
 
 Les données sont stockées dans votre navigateur, et le bouton « Réinitialiser la démo » remet le jeu d'origine.
 
@@ -29,20 +30,23 @@ Les données sont stockées dans votre navigateur, et le bouton « Réinitialise
 
 **Enseignant :**
 
-- promotions et import d'étudiants (CSV ou JSON) ;
-- projets en brouillon ou visibles, avec la taille des groupes ;
-- constitution des groupes par glisser-déposer ;
-- livrables avec échéance, pénalité de retard et règles de conformité vérifiées dans l'archive (fichiers requis, taille, dossiers) ;
+- accueil : ce qui reste à noter et à publier, prochaines échéances et soutenances ;
+- promotions et import d'étudiants (CSV ou JSON), avec aperçu avant import ;
+- projets en brouillon ou visibles, avec la taille des groupes et les étapes restantes avant le lancement ;
+- constitution des groupes par glisser-déposer, au clic ou par répartition automatique ;
+- livrables avec échéance, pénalité de retard et règles de conformité vérifiées dans l'archive (fichiers requis, taille, dossiers), suivi des rendus par groupe ;
 - détection de similarité entre rendus ;
-- grilles de notation pondérées et publication des notes ;
-- planning des soutenances ;
+- rapport : consignes et sections, suivi de chaque groupe, lecture et notation ;
+- grilles de notation pondérées, notes en brouillon, validées puis publiées, saisie groupe par groupe ;
+- soutenances : planning avec aperçu des créneaux, ordre de passage modifiable sans glisser, consignes de préparation, suivi du passage ;
 - export des notes en CSV.
 
 **Étudiant :**
 
-- rejoindre un groupe ;
-- rendre un livrable, avec vérification des règles avant l'envoi ;
-- rédiger le rapport section par section ;
+- rejoindre ou créer un groupe quand la formation est libre ;
+- rendre un livrable, avec vérification des règles avant l'envoi, et le remplacer tant que l'échéance n'est pas passée ;
+- rédiger le rapport section par section, avec sauvegarde automatique et alerte si un coéquipier a modifié le même texte ;
+- retrouver son créneau de soutenance et ses consignes de préparation ;
 - consulter ses notes publiées, critère par critère.
 
 L'interface est en français et propose un thème clair et sombre. Elle est utilisable sur mobile.
@@ -115,6 +119,17 @@ L'inscription publique crée uniquement des comptes étudiants. Un compte enseig
 npm --prefix backend run provision:teacher -- enseignant@example.com
 ```
 
+## Mettre à jour une base existante
+
+Aucune migration versionnée n'est fournie. Pour une base créée avant la publication des notes, le rapport éditable et les consignes de soutenance :
+
+1. lancer `npm --prefix backend run schema:sync` : il ajoute les colonnes `Grade.publishedAt`, `ReportSection.updatedBy` et `Defense.instructions`, et passe les pénalités (`penaltyPerHour` et `penalty`) en flottant ;
+2. exécuter ensuite cette requête, pour que les notes déjà validées restent visibles des étudiants :
+
+```sql
+UPDATE grade SET publishedAt = validatedAt WHERE status = 'validated';
+```
+
 ## Vérifier
 
 ```bash
@@ -127,7 +142,8 @@ Les tests de l'API portent sur :
 
 - les droits : un étudiant ne voit que son groupe et ses notes publiées, un enseignant uniquement ses projets ;
 - les jetons et la validation des entrées ;
-- les règles appliquées aux archives rendues et le calcul de similarité.
+- les règles appliquées aux archives rendues et le calcul de similarité ;
+- la notation (brouillon, validée, publiée), le planning des soutenances et les conflits d'édition du rapport.
 
 La CI (`.github/workflows/verify.yml`) lance ces vérifications à chaque push.
 

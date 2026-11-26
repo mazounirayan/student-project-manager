@@ -15,9 +15,10 @@ import { DetailSkeleton } from "@/components/shared/Skeletons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/contexts/auth-context"
+import { useDocumentTitle } from "@/hooks/use-document-title"
 import { errorMessage } from "@/lib/api"
 import { confirmAction } from "@/lib/dialogs"
-import { formatDateFull, formatDateTime, plural } from "@/lib/format"
+import { formatFullDateTime, formatShortDateTime, plural } from "@/lib/format"
 import { fullName } from "@/lib/people"
 import {
   defensesOf,
@@ -48,6 +49,7 @@ export function StudentProjectDetailsPageContent({ params }: ProjectDetailsPageP
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  useDocumentTitle(project?.name)
 
   const load = useCallback(
     async (silent = false) => {
@@ -112,7 +114,7 @@ export function StudentProjectDetailsPageContent({ params }: ProjectDetailsPageP
   const { group: myGroup, state } = studentGroupState(project, studentId)
   const maxSize = maxGroupSize(project)
   const deadline = project.groupFormationDeadline
-  const deadlineText = deadline ? ` jusqu’au ${formatDateTime(deadline)}` : ""
+  const deadlineText = deadline ? ` jusqu’au ${formatShortDateTime(deadline)}` : ""
   const mySubmissions = deliverablesOf(project).some((deliverable) => deliverable.submissions?.some((s) => s.groupId === myGroup?.id))
   const canLeave = state === "member" && isFreeFormation(project) && !formationClosed(project)
 
@@ -185,7 +187,7 @@ export function StudentProjectDetailsPageContent({ params }: ProjectDetailsPageP
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/40 p-3">
                     <p className="text-sm">
                       <span className="font-medium">Choisissez votre groupe</span>
-                      <span className="text-muted-foreground">{deadlineText ? `, avant le ${formatDateTime(deadline)}` : ""}. Vous pouvez aussi créer le vôtre.</span>
+                      <span className="text-muted-foreground">{deadlineText ? `, avant le ${formatShortDateTime(deadline)}` : ""}. Vous pouvez aussi créer le vôtre.</span>
                     </p>
                     <Button variant="outline" disabled={pending} onClick={create}>
                       <Plus aria-hidden="true" className="h-4 w-4" />
@@ -251,7 +253,7 @@ export function StudentProjectDetailsPageContent({ params }: ProjectDetailsPageP
                   <p className="flex flex-wrap items-center gap-2 text-sm">
                     <CheckCircle2 aria-hidden="true" className="h-4 w-4 text-primary" />
                     <span className="font-medium">{myGroup.name}</span>
-                    <span className="text-muted-foreground">· {myGroup.members.length}/{maxSize} membres</span>
+                    <span className="text-muted-foreground">· {plural(myGroup.members.length, "membre")}</span>
                   </p>
                   <ul className="space-y-1 text-sm text-muted-foreground">
                     {myGroup.members.map((member) => (
@@ -315,7 +317,7 @@ export function StudentProjectDetailsPageContent({ params }: ProjectDetailsPageP
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">Date limite</dt>
-                  <dd className="font-medium">{deadline ? formatDateFull(deadline) : "Aucune"}</dd>
+                  <dd className="font-medium">{deadline ? formatFullDateTime(deadline) : "Aucune"}</dd>
                 </div>
               </dl>
             </SectionCard>
@@ -359,7 +361,7 @@ function collectDates(project: Project, myGroup: ProjectGroup | null, groupsOpen
     items.push({
       key: "groups",
       title: "Constitution des groupes",
-      when: formatDateTime(project.groupFormationDeadline),
+      when: formatShortDateTime(project.groupFormationDeadline),
       date: project.groupFormationDeadline,
       done: false,
       badge: groupsOpen,
@@ -370,7 +372,7 @@ function collectDates(project: Project, myGroup: ProjectGroup | null, groupsOpen
     items.push({
       key: `d-${deliverable.id}`,
       title: deliverable.name,
-      when: formatDateTime(deliverable.deadline),
+      when: formatShortDateTime(deliverable.deadline),
       date: deliverable.deadline,
       done: Boolean(submission),
       late: submission?.isLate,

@@ -6,6 +6,7 @@ import { CalendarClock, FolderOpen, Users } from "lucide-react"
 import { ProtectedRoute } from "@/components/auth/protected-route"
 import { MainLayout } from "@/components/layout/main-layout"
 import { PageContainer, PageHeader } from "@/components/layout/page"
+import { DefenseWhenBadge } from "@/components/projects/StudentDefenseCard"
 import { DueBadge } from "@/components/shared/DueBadge"
 import { EmptyState } from "@/components/shared/EmptyState"
 import { ErrorState } from "@/components/shared/ErrorState"
@@ -15,8 +16,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
 import { useAuth } from "@/contexts/auth-context"
 import { errorMessage } from "@/lib/api"
-import { formatDateTime, formatDayMonth, plural } from "@/lib/format"
-import { nextDeliverable, studentGroupState } from "@/lib/projects"
+import { formatShortDateTime, plural } from "@/lib/format"
+import { nextStudentDate, studentGroupState } from "@/lib/projects"
 import { projectPath } from "@/lib/routes"
 import { fetchMyProjects, type Project } from "@/services/project.service"
 
@@ -82,7 +83,7 @@ function MyProjectsPageContent() {
 
 function ProjectCard({ project, studentId }: { project: Project; studentId: number }) {
   const { group, state } = studentGroupState(project, studentId)
-  const deliverable = nextDeliverable(project)
+  const next = nextStudentDate(project, group?.id)
   const detail = projectPath("/my-projects", project.id)
 
   return (
@@ -120,7 +121,7 @@ function ProjectCard({ project, studentId }: { project: Project; studentId: numb
               </dd>
               {!group && state === "can-join" && project.groupFormationDeadline && (
                 <dd className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  Jusqu’au {formatDateTime(project.groupFormationDeadline)}
+                  Jusqu’au {formatShortDateTime(project.groupFormationDeadline)}
                   <DueBadge date={project.groupFormationDeadline} />
                 </dd>
               )}
@@ -132,18 +133,18 @@ function ProjectCard({ project, studentId }: { project: Project; studentId: numb
             <div className="space-y-1">
               <dt className="sr-only">Prochaine échéance</dt>
               <dd>
-                {deliverable ? (
+                {next ? (
                   <>
-                    <span className="font-medium">{deliverable.name}</span>
-                    <span className="text-muted-foreground"> · {formatDayMonth(deliverable.deadline)}</span>
+                    <span className="font-medium">{next.title}</span>
+                    <span className="text-muted-foreground"> · {formatShortDateTime(next.date)}</span>
                   </>
                 ) : (
                   <span className="text-muted-foreground">Aucune échéance à venir</span>
                 )}
               </dd>
-              {deliverable && (
+              {next && (
                 <dd>
-                  <DueBadge date={deliverable.deadline} />
+                  {next.kind === "defense" ? <DefenseWhenBadge startTime={next.slot.slot.startTime} status={next.slot.status} /> : <DueBadge date={next.date} />}
                 </dd>
               )}
             </div>

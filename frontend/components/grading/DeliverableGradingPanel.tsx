@@ -11,8 +11,9 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { downloadFile, errorMessage } from '@/lib/api'
 import type { Deliverable, GroupRef, Submission } from '@/lib/deliverables'
-import { formatDayMonth, formatFileSize, formatTime } from '@/lib/format'
+import { formatFileSize, formatShortDateTime } from '@/lib/format'
 import { loadProjectGrids, type Grid } from '@/lib/grading'
+import { memberNames } from '@/lib/people'
 import { CreateGradingGridDialog } from './CreateGradingGridDialog'
 import { GridGradingWorkspace, type GradableGroup } from './GridGradingWorkspace'
 
@@ -57,7 +58,8 @@ export function DeliverableGradingPanel({ projectId, deliverable, groups, initia
         return {
           id: group.id,
           name: group.name,
-          note: submission ? `Rendu le ${formatDayMonth(submission.submittedAt)}${submission.isLate ? ', en retard' : ''}` : 'Pas de rendu',
+          members: memberNames(group.members),
+          note: submission ? `Rendu le ${formatShortDateTime(submission.submittedAt)}${submission.isLate ? ', en retard' : ''}` : 'Pas de rendu',
         }
       }),
     [groups, submissions],
@@ -155,7 +157,7 @@ function SubmissionContext({ deliverable, group, submission }: { deliverable: De
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <span className="text-muted-foreground">
-              Déposé le {formatDayMonth(submission.submittedAt)} à {formatTime(submission.submittedAt)}
+              Déposé le {formatShortDateTime(submission.submittedAt)}
             </span>
             {submission.fileName && (
               <>

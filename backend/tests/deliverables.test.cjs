@@ -74,7 +74,7 @@ test("la ressemblance n'est visible que de l'enseignant, avec le nom des groupes
     ...project, groups: [groupA, groupB], reports: [], defenses: [], gradingGrids: [],
     deliverables: [{ ...deliverable, submissions: [a, b] }],
   };
-  const restore = install({ Project: memoryRepository([withRelations]) });
+  const restore = install({ Project: memoryRepository([withRelations]), ReportConfig: memoryRepository([]) });
   try {
     const asStudent = await new ProjectService().getProjectDetail(project.id, { id: alice.id, role: 'student' });
     const [own] = asStudent.deliverables[0].submissions;

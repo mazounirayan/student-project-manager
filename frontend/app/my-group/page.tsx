@@ -8,6 +8,7 @@ import { MainLayout } from "@/components/layout/main-layout"
 import { PageContainer, PageHeader } from "@/components/layout/page"
 import { EmptyState } from "@/components/shared/EmptyState"
 import { ErrorState } from "@/components/shared/ErrorState"
+import { StudentDefenseBanner } from "@/components/projects/StudentDefenseCard"
 import { GroupReportStatus } from "@/components/reports/GroupReportStatus"
 import { SectionCard } from "@/components/shared/SectionCard"
 import { CardsSkeleton } from "@/components/shared/Skeletons"
@@ -15,8 +16,9 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/contexts/auth-context"
 import { errorMessage } from "@/lib/api"
+import { plural } from "@/lib/format"
 import { fullName, initials } from "@/lib/people"
-import { maxGroupSize, studentGroupState } from "@/lib/projects"
+import { defensesOf, studentGroupState } from "@/lib/projects"
 import { projectPath } from "@/lib/routes"
 import { fetchMyProjects, type Project } from "@/services/project.service"
 
@@ -88,7 +90,7 @@ function MyGroupPageContent() {
               <SectionCard
                 key={project.id}
                 title={group!.name}
-                description={`${project.name} · ${group!.members.length}/${maxGroupSize(project)} membres`}
+                description={`${project.name} · ${plural(group!.members.length, "membre")}`}
               >
                 <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {group!.members.map((member) => (
@@ -106,7 +108,10 @@ function MyGroupPageContent() {
                     </li>
                   ))}
                 </ul>
-                <GroupReportStatus projectId={project.id} groupId={group!.id} />
+                <div className="mt-4 space-y-3">
+                  <StudentDefenseBanner defenses={defensesOf(project)} groupId={group!.id} href={projectPath("/my-projects", project.id)} />
+                  <GroupReportStatus projectId={project.id} groupId={group!.id} />
+                </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button asChild>
                     <Link href={projectPath("/my-projects", project.id, "/group")}>Ouvrir l’espace du groupe</Link>

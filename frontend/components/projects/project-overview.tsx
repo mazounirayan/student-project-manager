@@ -1,13 +1,13 @@
 "use client"
 
 import { Circle, CheckCircle2 } from "lucide-react"
+import { DueBadge } from "@/components/shared/DueBadge"
 import { SectionCard } from "@/components/shared/SectionCard"
 import { StatTile } from "@/components/shared/StatTile"
 import { Button } from "@/components/ui/button"
-import { formatDate, formatDateTime, formatDayMonth } from "@/lib/format"
+import { formatDate, formatDayMonth, formatFullDateTime } from "@/lib/format"
 import {
   deliverablesOf,
-  formationClosed,
   formationLabel,
   groupSizeLabel,
   groupsOf,
@@ -51,7 +51,7 @@ export function ProjectOverview({ project, onAction }: ProjectOverviewProps) {
 
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">
-          <SectionCard title={firstTodo ? "Pour lancer le projet" : "Le projet est prêt"} description={firstTodo ? "Les étapes qui restent avant que les étudiants puissent travailler." : "Groupes constitués, livrables définis et projet visible."}>
+          <SectionCard title={firstTodo ? "Pour lancer le projet" : "Le projet est prêt"} description={firstTodo ? "Ce qu’il reste à préparer, dans l’ordre." : "Toutes les étapes sont faites."}>
             <ol className="divide-y">
               {steps.map((step) => (
                 <li key={step.key} className="flex flex-wrap items-start gap-x-3 gap-y-2 py-3 first:pt-0 last:pb-0">
@@ -92,10 +92,10 @@ export function ProjectOverview({ project, onAction }: ProjectOverviewProps) {
             <Row label="Taille des groupes">{groupSizeLabel(project).replace(" par groupe", "")}</Row>
             <Row label="Date limite des groupes">
               {project.groupFormationDeadline ? (
-                <>
-                  {formatDateTime(project.groupFormationDeadline)}
-                  {formationClosed(project) && <span className="text-muted-foreground"> (passée)</span>}
-                </>
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  {formatFullDateTime(project.groupFormationDeadline)}
+                  <DueBadge date={project.groupFormationDeadline} />
+                </span>
               ) : (
                 "Aucune"
               )}

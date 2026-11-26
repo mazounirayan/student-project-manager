@@ -6,13 +6,14 @@ import { PageContainer, PageHeader } from "@/components/layout/page"
 import { DueBadge } from "@/components/shared/DueBadge"
 import { EmptyState } from "@/components/shared/EmptyState"
 import { ErrorState } from "@/components/shared/ErrorState"
+import { ProjectStatusBadge } from "@/components/projects/project-status-badge"
 import { SectionCard } from "@/components/shared/SectionCard"
 import { StatTile } from "@/components/shared/StatTile"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DashboardSkeleton, QuietEmpty, RowLink, useOverview } from "@/components/dashboard/parts"
 import { loadTeacherOverview, type TeacherOverview } from "@/lib/dashboard"
-import { formatDate, formatDateFull, formatDayMonth, formatDateTime, gridTypeLabel, plural } from "@/lib/format"
+import { formatDateFull, formatDayMonth, formatShortDateTime, formatTime, gridTypeLabel, plural } from "@/lib/format"
 import { projectPath } from "@/lib/routes"
 
 const MAX_DEADLINES = 5
@@ -53,6 +54,7 @@ export function TeacherDashboard({ firstName }: { firstName: string }) {
 
 function Overview({ data }: { data: TeacherOverview }) {
   const nextDefense = data.defensePlans[0]
+  const nextDefenseDate = nextDefense?.live ? "En cours" : nextDefense?.next ? formatDayMonth(nextDefense.next.startTime) : "–"
 
   return (
     <div className="space-y-6">
@@ -62,8 +64,8 @@ function Overview({ data }: { data: TeacherOverview }) {
         <StatTile label="Échéances sous 7 jours" value={data.deadlinesThisWeek} hint="livrables et rapports" />
         <StatTile
           label="Prochaine soutenance"
-          value={nextDefense ? formatDayMonth(nextDefense.firstStart) : "–"}
-          hint={nextDefense ? nextDefense.projectName : "Aucune de planifiée"}
+          value={nextDefenseDate}
+          hint={nextDefense ? nextDefense.projectName : "Aucune planifiée"}
         />
       </div>
 
@@ -110,7 +112,7 @@ function Overview({ data }: { data: TeacherOverview }) {
                     href={projectPath("/projects", deadline.projectId)}
                     aside={
                       <>
-                        <span className="text-xs text-muted-foreground">{formatDate(deadline.date)}</span>
+                        <span className="text-xs text-muted-foreground">{formatShortDateTime(deadline.date)}</span>
                         <DueBadge date={deadline.date} />
                       </>
                     }
@@ -127,19 +129,31 @@ function Overview({ data }: { data: TeacherOverview }) {
         </div>
 
         <div className="min-w-0 space-y-6">
-          <SectionCard title="Soutenances à venir">
+          <SectionCard title="Soutenances">
             {data.defensePlans.length === 0 ? (
-              <QuietEmpty>Aucune soutenance planifiée. Le planning se prépare depuis la page d’un projet.</QuietEmpty>
+              <QuietEmpty>Aucune soutenance à venir. Le planning se prépare depuis la page d’un projet.</QuietEmpty>
             ) : (
               <ul className="divide-y">
                 {data.defensePlans.map((plan) => (
-                  <RowLink key={plan.projectId} href={`${projectPath("/projects", plan.projectId)}#defenses`}>
+                  <RowLink
+                    key={plan.projectId}
+                    href={`${projectPath("/projects", plan.projectId)}#defenses`}
+                    aside={plan.live && <Badge>En cours</Badge>}
+                  >
                     <span className="block text-sm font-medium">{plan.projectName}</span>
-                    <span className="block text-xs text-muted-foreground">
-                      {formatDateTime(plan.firstStart)}
-                      {plan.location ? ` · ${plan.location}` : ""}
-                    </span>
-                    <span className="block text-xs text-muted-foreground">{plural(plan.upcoming, "passage", "passages")} à venir</span>
+                    {plan.live && (
+                      <span className="block text-xs text-muted-foreground">
+                        {plan.live.groupName} passe jusqu’à {formatTime(plan.live.endTime)}
+                      </span>
+                    )}
+                    {plan.next && (
+                      <span className="block text-xs text-muted-foreground">
+                        {plan.live ? "Ensuite : " : ""}
+                        {formatShortDateTime(plan.next.startTime)}
+                        {plan.next.location ? ` · ${plan.next.location}` : ""}
+                      </span>
+                    )}
+                    {plan.upcoming > 0 && <span className="block text-xs text-muted-foreground">{plural(plan.upcoming, "passage", "passages")} à venir</span>}
                   </RowLink>
                 ))}
               </ul>
@@ -152,7 +166,7 @@ function Overview({ data }: { data: TeacherOverview }) {
                 <RowLink
                   key={project.id}
                   href={projectPath("/projects", project.id)}
-                  aside={<Badge variant={project.status === "visible" ? "secondary" : "outline"}>{project.status === "visible" ? "Visible" : "Brouillon"}</Badge>}
+                  aside={<ProjectStatusBadge status={project.status} />}
                 >
                   <span className="block text-sm font-medium">{project.name}</span>
                   <span className="block text-xs text-muted-foreground">{plural(project.groups.length, "groupe", "groupes")}</span>

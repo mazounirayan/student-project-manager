@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { formatDate, formatDateTime, formatDayMonth, formatNumber, formatRelativeDay, plural } from '@/lib/format'
+import { formatDayMonth, formatNumber, formatRelativeDay, formatShortDateTime, plural } from '@/lib/format'
 import { gradeState } from '@/lib/grading'
 import { fullName, normalizeText } from '@/lib/people'
 import { countStates, STATE_LABELS, type GroupOverview, type ReportConfig, type ReportState } from '@/lib/reports'
@@ -153,7 +153,7 @@ function StateBadge({ row }: { row: GroupOverview }) {
     return (
       <Badge variant="secondary">
         <CheckCircle2 aria-hidden="true" />
-        Rendu le {formatDate(row.report?.submittedAt)}
+        Rendu le {formatShortDateTime(row.report?.submittedAt)}
       </Badge>
     )
   }
@@ -183,7 +183,7 @@ function GroupRow({ row, onRead }: { row: GroupOverview; onRead: () => void }) {
           )}
         </div>
         {progress.total > 0 && <Progress value={(progress.written / progress.total) * 100} className="h-1.5 max-w-xs" aria-label={`Sections rédigées : ${progress.written} sur ${progress.total}`} />}
-        {row.lastActivity && <p className="text-xs text-muted-foreground">Dernière activité : {formatDateTime(row.lastActivity)}</p>}
+        {row.lastActivity && <p className="text-xs text-muted-foreground">Dernière activité : {formatShortDateTime(row.lastActivity)}</p>}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 md:justify-end">

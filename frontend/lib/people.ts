@@ -13,6 +13,9 @@ export function initials(person: Pick<Person, "firstName" | "lastName" | "email"
   return (letters || person.email?.[0] || "?").toUpperCase()
 }
 
+/** « Alex Moret, Brice Lemaire » : les membres d’un groupe, partout écrits de la même façon. */
+export const memberNames = (members: Array<Pick<Person, "firstName" | "lastName">> | null | undefined) => (members ?? []).map(fullName).join(", ")
+
 /** Minuscules sans accents, pour comparer et chercher sans se soucier de la saisie. */
 export function normalizeText(text: string) {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()

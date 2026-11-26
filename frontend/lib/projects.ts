@@ -1,6 +1,6 @@
 /** Règles et lectures communes aux pages de projet (enseignante et étudiant) : groupes, dates, étapes restantes. */
 import { confirmAction } from "@/lib/dialogs"
-import type { DefenseSlot } from "@/lib/defenses"
+import { studentSlot, type DefenseSlot, type StudentSlot } from "@/lib/defenses"
 import { plural } from "@/lib/format"
 import type { Project } from "@/services/project.service"
 
@@ -72,7 +72,8 @@ export function groupFill(group: Pick<ProjectGroup, "members">, project: Pick<Pr
   return count < (project.minGroupSize || 1) ? "incomplete" : "ok"
 }
 
-export type ChecklistAction = "groups" | "deliverables" | "publish"
+/** Chaque action porte le nom de l’onglet de la page projet où la mener, sauf « publish » qui rend le projet visible. */
+export type ChecklistAction = "groups" | "deliverables" | "reports" | "defenses" | "publish"
 
 export interface ChecklistStep {
   key: ChecklistAction
@@ -82,7 +83,15 @@ export interface ChecklistStep {
   actionLabel: string
 }
 
-/** Ce qu’il reste à faire pour lancer un projet : constituer les groupes, ajouter un livrable, le rendre visible. */
+/** Groupes qui ont au moins un membre : les seuls à qui l’on attribue un créneau de soutenance. */
+const staffedGroups = (project: Project) => groupsOf(project).filter((group) => group.members.length > 0)
+
+const hasDefenseGrid = (project: Project) => ((project.gradingGrids ?? []) as { type?: string }[]).some((grid) => grid.type === "defense")
+
+/**
+ * Ce qu’il reste à faire pour lancer un projet : constituer les groupes, ajouter un livrable, préparer le rapport s’il est demandé,
+ * planifier les soutenances (quand il y a une grille de soutenance ou des groupes), puis rendre le projet visible.
+ */
 export function projectChecklist(project: Project): ChecklistStep[] {
   const students = studentsOf(project)
   const groups = groupsOf(project)
@@ -98,7 +107,7 @@ export function projectChecklist(project: Project): ChecklistStep[] {
     groupsDetail += visible ? " Ils peuvent aussi rejoindre un groupe eux-mêmes." : " Ils pourront rejoindre un groupe eux-mêmes une fois le projet visible."
   }
 
-  return [
+  const steps: ChecklistStep[] = [
     {
       key: "groups",
       done: students.length > 0 && waiting === 0 && groups.length > 0,
@@ -113,6 +122,39 @@ export function projectChecklist(project: Project): ChecklistStep[] {
       detail: deliverables.length > 0 ? `${plural(deliverables.length, "livrable")} défini${deliverables.length > 1 ? "s" : ""}.` : "Aucun livrable à rendre pour l’instant.",
       actionLabel: "Ajouter un livrable",
     },
+  ]
+
+  const report = project.reportConfig
+  if (report?.isEnabled) {
+    const todo = [report.sectionCount === 0 && "ajoutez au moins une section", !report.deadline && "fixez la date limite"].filter(Boolean) as string[]
+    steps.push({
+      key: "reports",
+      done: todo.length === 0,
+      title: "Préparer le rapport",
+      detail: todo.length === 0 ? `Rapport ouvert : ${plural(report.sectionCount, "section")} et une date limite.` : `Le rapport est ouvert : ${todo.join(" et ")}.`,
+      actionLabel: "Préparer le rapport",
+    })
+  }
+
+  const staffed = staffedGroups(project)
+  if (hasDefenseGrid(project) || groups.length > 0) {
+    const scheduled = new Set(defensesOf(project).flatMap((slot) => (slot.group ? [slot.group.id] : [])))
+    const unscheduled = staffed.filter((group) => !scheduled.has(group.id)).length
+    let defensesDetail: string
+    if (staffed.length === 0) defensesDetail = "Les soutenances se planifient une fois les groupes constitués."
+    else if (scheduled.size === 0) defensesDetail = "Aucune soutenance planifiée pour l’instant."
+    else if (unscheduled > 0) defensesDetail = `${plural(unscheduled, "groupe")} sur ${staffed.length} ${unscheduled > 1 ? "n’ont" : "n’a"} pas de créneau.`
+    else defensesDetail = `${plural(staffed.length, "groupe")} ${staffed.length > 1 ? "ont" : "a"} un créneau de soutenance.`
+    steps.push({
+      key: "defenses",
+      done: staffed.length > 0 && unscheduled === 0,
+      title: "Planifier les soutenances",
+      detail: defensesDetail,
+      actionLabel: "Planifier les soutenances",
+    })
+  }
+
+  steps.push(
     {
       key: "publish",
       done: visible,
@@ -120,15 +162,18 @@ export function projectChecklist(project: Project): ChecklistStep[] {
       detail: visible ? "Les étudiants de la promotion voient le projet." : "Le projet est en brouillon : les étudiants ne le voient pas encore.",
       actionLabel: "Rendre visible",
     },
-  ]
+  )
+  return steps
 }
 
 /** Première étape restante, en une phrase courte pour les listes, avec l’onglet de la page projet où la mener. */
-export function nextStep(project: Project): { label: string; tab: "groups" | "deliverables" | "overview" } | null {
+export function nextStep(project: Project): { label: string; tab: "groups" | "deliverables" | "reports" | "defenses" | "overview" } | null {
   const step = projectChecklist(project).find((item) => !item.done)
   if (!step) return null
   if (step.key === "publish") return { label: "Rendre le projet visible aux étudiants", tab: "overview" }
   if (step.key === "deliverables") return { label: "Ajouter un livrable", tab: "deliverables" }
+  if (step.key === "reports") return { label: "Préparer le rapport", tab: "reports" }
+  if (step.key === "defenses") return { label: "Planifier les soutenances", tab: "defenses" }
   const waiting = ungroupedStudents(project).length
   if (waiting > 0) return { label: `${plural(waiting, "étudiant")} sans groupe`, tab: "groups" }
   return { label: studentsOf(project).length === 0 ? "La promotion n’a pas d’étudiants" : "Constituer les groupes", tab: "groups" }
@@ -172,8 +217,23 @@ export function studentGroupState(project: Project, studentId: number): { group:
   return { group: null, state: formationClosed(project) ? "closed" : "can-join" }
 }
 
+/** Prochaine date à retenir pour un étudiant : un livrable à rendre ou la soutenance de son groupe, selon la plus proche. */
+export type NextStudentDate =
+  | { kind: "deliverable"; title: string; date: string }
+  | { kind: "defense"; title: string; date: string; slot: StudentSlot }
+
+export function nextStudentDate(project: Project, groupId: number | null | undefined): NextStudentDate | null {
+  const deliverable = nextDeliverable(project)
+  const found = studentSlot(defensesOf(project), groupId)
+  const slot = found && found.status !== "done" ? found : null
+  if (slot && (!deliverable || new Date(slot.slot.startTime) <= new Date(deliverable.deadline))) {
+    return { kind: "defense", title: "Soutenance", date: slot.slot.startTime, slot }
+  }
+  return deliverable ? { kind: "deliverable", title: deliverable.name, date: deliverable.deadline } : null
+}
+
 /** Prochaine échéance de livrable du projet, ou null. */
-export function nextDeliverable(project: Project): ProjectDeliverable | null {
+function nextDeliverable(project: Project): ProjectDeliverable | null {
   const now = Date.now()
   return (
     deliverablesOf(project)

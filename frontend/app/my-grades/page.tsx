@@ -216,7 +216,7 @@ function PublishedEvaluation({ grade, share, isNew }: { grade: PublishedGrade; s
 
       {grade.feedback && (
         <div className="border-t p-4">
-          <h4 className="text-sm font-medium">Appréciation de l’enseignant</h4>
+          <h4 className="text-sm font-medium">Appréciation générale</h4>
           <p className="mt-1 whitespace-pre-line text-sm text-muted-foreground">{grade.feedback}</p>
         </div>
       )}

@@ -30,7 +30,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Input } from "@/components/ui/input"
 import { errorMessage } from "@/lib/api"
 import { confirmAction } from "@/lib/dialogs"
-import { formatDateTime, plural } from "@/lib/format"
+import { formatShortDateTime, plural } from "@/lib/format"
 import { moveStudent, planAutoDistribution } from "@/lib/groups"
 import { fullName, initials, matchesQuery } from "@/lib/people"
 import { formationClosed, groupFill, groupSizeLabel, isFreeFormation, maxGroupSize, type ProjectGroup, type ProjectPerson } from "@/lib/projects"
@@ -298,7 +298,7 @@ export default function GroupsBoard({ project, students, initialGroups, onGroups
               {free
                 ? closed
                   ? "Formation libre, terminée : les étudiants ne peuvent plus changer de groupe."
-                  : `Formation libre : les étudiants peuvent aussi rejoindre ou quitter un groupe${project.groupFormationDeadline ? ` jusqu’au ${formatDateTime(project.groupFormationDeadline)}` : ""}.`
+                  : `Formation libre : les étudiants peuvent aussi rejoindre ou quitter un groupe${project.groupFormationDeadline ? ` jusqu’au ${formatShortDateTime(project.groupFormationDeadline)}` : ""}.`
                 : "C’est vous qui placez les étudiants."}
               {project.status === "draft" && " Le projet est en brouillon : les étudiants ne voient pas encore les groupes."}
             </p>

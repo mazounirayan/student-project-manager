@@ -149,7 +149,9 @@ function UsersPageContent() {
 
   const promotionNames = (u: AppUser) => {
     const list = promotionsOf.get(u.id) ?? []
-    if (u.role === "teacher") return <span className="text-muted-foreground">Enseignant</span>
+    if (u.role === "teacher") return <span className="text-muted-foreground">
+          –<span className="sr-only">Sans objet pour un enseignant</span>
+        </span>
     return list.length > 0 ? list.map((p) => p.name).join(", ") : <span className="text-muted-foreground">Aucune de vos promotions</span>
   }
 

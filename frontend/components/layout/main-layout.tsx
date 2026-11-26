@@ -8,9 +8,8 @@ import { useAuth } from "@/contexts/auth-context"
 import { LoginForm } from "@/components/auth/login-form"
 import { Sidebar } from "@/components/layout/sidebar"
 import { currentNavItem } from "@/components/layout/nav"
+import { APP_NAME } from "@/lib/app"
 import { DemoBanner } from "@/components/demo/demo-banner"
-
-const APP_NAME = "Gestionnaire de projets"
 
 export function MainLayout({ children }: { children: ReactNode }) {
   const { user, loading, isRefreshing } = useAuth()
@@ -18,11 +17,6 @@ export function MainLayout({ children }: { children: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false)
 
   const section = currentNavItem(user?.role, pathname)?.label
-
-  // Le titre de l’onglet suit la section courante (utile aussi aux lecteurs d’écran).
-  useEffect(() => {
-    document.title = user && section && section !== "Accueil" ? `${section} · ${APP_NAME}` : APP_NAME
-  }, [user, section])
 
   // Referme le panneau mobile à chaque changement de page, et s’il n’a plus lieu d’être (écran élargi).
   useEffect(() => setNavOpen(false), [pathname])

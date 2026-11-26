@@ -6,7 +6,7 @@ import { DueBadge } from "@/components/shared/DueBadge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { describeRule, latePolicy, studentAction, type Deliverable, type Submission } from "@/lib/deliverables"
-import { formatDateFull, formatTime } from "@/lib/format"
+import { formatFullDateTime } from "@/lib/format"
 import { projectPath } from "@/lib/routes"
 
 interface StudentDeliverableCardProps {
@@ -53,7 +53,7 @@ export function StudentDeliverableCard({ deliverable, groupId, projectId, projec
         <div className="flex flex-wrap gap-x-2">
           <dt className="text-muted-foreground">Échéance :</dt>
           <dd className="font-medium">
-            {formatDateFull(deliverable.deadline)} à {formatTime(deliverable.deadline)}
+            {formatFullDateTime(deliverable.deadline)}
           </dd>
         </div>
         {!submission && (

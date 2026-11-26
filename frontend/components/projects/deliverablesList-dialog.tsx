@@ -15,7 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { apiDelete, apiPost, errorMessage } from "@/lib/api"
 import { confirmAction } from "@/lib/dialogs"
 import { describeRule, latePolicy, type Deliverable, type GroupRef, type GroupRow } from "@/lib/deliverables"
-import { formatDateFull, formatTime, plural } from "@/lib/format"
+import { formatFullDateTime, plural } from "@/lib/format"
 
 interface DeliverablesListProps {
   groups: GroupRef[]
@@ -109,7 +109,7 @@ export function DeliverablesList({ groups, deliverables, onEdit, onChanged, onGr
                   <DueBadge date={deliverable.deadline} />
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Échéance : {formatDateFull(deliverable.deadline)} à {formatTime(deliverable.deadline)}
+                  Échéance : {formatFullDateTime(deliverable.deadline)}
                 </p>
                 <p className="text-sm text-muted-foreground">{latePolicy(deliverable)}</p>
                 {deliverable.description && <p className="max-w-3xl whitespace-pre-line pt-1 text-sm">{deliverable.description}</p>}

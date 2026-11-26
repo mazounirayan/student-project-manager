@@ -4,12 +4,10 @@
  * aucun endpoint dédié n’est nécessaire, en API réelle comme en démo.
  */
 import { apiGet } from "@/lib/api"
+import { awaitsGrade, gradeState, isReadyToGrade, type GridType, type SessionStatus } from "@/lib/grading"
 import { daysUntil } from "@/lib/format"
 import { projectPath } from "@/lib/routes"
 import { fetchMyProjects, getProjectById } from "@/services/project.service"
-
-type GridType = "deliverable" | "report" | "defense"
-export type SessionStatus = "draft" | "submitted" | "validated"
 
 interface Group {
   id: number
@@ -42,6 +40,7 @@ interface Grid {
   id: number
   name: string
   type: GridType
+  deliverableId?: number | null
 }
 interface Session {
   gridId: number
@@ -139,10 +138,12 @@ export interface Deadline {
 export interface DefensePlan {
   projectId: number
   projectName: string
-  firstStart: string
-  location: string | null
+  /** Passage en cours (commencé, pas fini), s’il y en a un. */
+  live: { groupName: string; endTime: string } | null
+  /** Premier passage qui n’a pas commencé, ou null s’il n’en reste plus. */
+  next: { startTime: string; location: string | null } | null
+  /** Passages qui n’ont pas commencé. */
   upcoming: number
-  total: number
 }
 
 export interface TeacherOverview {
@@ -153,19 +154,6 @@ export interface TeacherOverview {
   toGradeTotal: number
   toPublishTotal: number
   deadlinesThisWeek: number
-  upcomingDefenses: number
-}
-
-/** Groupes dont le travail attend une note, selon le type de grille. */
-function readyGroupIds(project: ProjectOverview, type: GridType, now: number): Set<number> {
-  switch (type) {
-    case "deliverable":
-      return new Set(project.deliverables.flatMap((d) => (d.submissions ?? []).map((s) => s.groupId)))
-    case "report":
-      return new Set(project.reports.filter((r) => r.status === "submitted").map((r) => r.groupId))
-    case "defense":
-      return new Set(project.defenses.filter((d) => new Date(d.endTime).getTime() <= now).map((d) => d.groupId))
-  }
 }
 
 export function buildTeacherOverview(projects: ProjectOverview[], sessions: Session[], now = Date.now()): TeacherOverview {
@@ -173,8 +161,9 @@ export function buildTeacherOverview(projects: ProjectOverview[], sessions: Sess
   for (const project of projects) {
     for (const grid of project.gradingGrids) {
       const mine = sessions.filter((s) => s.gridId === grid.id)
-      const done = new Set(mine.filter((s) => s.status !== "draft").map((s) => s.groupId))
-      const toGrade = [...readyGroupIds(project, grid.type, now)].filter((id) => !done.has(id)).length
+      const toGrade = project.groups.filter((group) =>
+        awaitsGrade(gradeState(mine.find((s) => s.groupId === group.id)), isReadyToGrade(project, grid, group.id, now)),
+      ).length
       const toPublish = mine.filter((s) => s.status === "validated" && !s.publishedAt).length
       if (toGrade + toPublish > 0) {
         gradingTasks.push({
@@ -225,21 +214,22 @@ export function buildTeacherOverview(projects: ProjectOverview[], sessions: Sess
 
   const defensePlans: DefensePlan[] = []
   for (const project of projects) {
-    const upcoming = project.defenses
-      .filter((d) => new Date(d.endTime).getTime() > now)
-      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
-    if (upcoming.length > 0) {
+    const ordered = [...project.defenses].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+    const live = ordered.find((d) => new Date(d.startTime).getTime() <= now && new Date(d.endTime).getTime() > now)
+    const waiting = ordered.filter((d) => new Date(d.startTime).getTime() > now)
+    if (live || waiting.length > 0) {
       defensePlans.push({
         projectId: project.id,
         projectName: project.name,
-        firstStart: upcoming[0].startTime,
-        location: upcoming[0].location ?? null,
-        upcoming: upcoming.length,
-        total: project.defenses.length,
+        live: live ? { groupName: live.group?.name ?? "Un groupe", endTime: live.endTime } : null,
+        next: waiting[0] ? { startTime: waiting[0].startTime, location: waiting[0].location ?? null } : null,
+        upcoming: waiting.length,
       })
     }
   }
-  defensePlans.sort((a, b) => new Date(a.firstStart).getTime() - new Date(b.firstStart).getTime())
+  // En cours d’abord, puis par date du prochain passage.
+  const startOf = (plan: DefensePlan) => (plan.live ? 0 : new Date(plan.next?.startTime ?? 0).getTime())
+  defensePlans.sort((a, b) => startOf(a) - startOf(b))
 
   return {
     projects,
@@ -249,7 +239,6 @@ export function buildTeacherOverview(projects: ProjectOverview[], sessions: Sess
     toGradeTotal: gradingTasks.reduce((sum, t) => sum + t.toGrade, 0),
     toPublishTotal: gradingTasks.reduce((sum, t) => sum + t.toPublish, 0),
     deadlinesThisWeek: upcomingDeadlines.filter((d) => (daysUntil(d.date) ?? 99) <= 7).length,
-    upcomingDefenses: defensePlans.reduce((sum, p) => sum + p.upcoming, 0),
   }
 }
 

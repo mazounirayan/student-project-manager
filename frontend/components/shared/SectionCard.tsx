@@ -21,7 +21,7 @@ export function SectionCard({ title, description, action, children }: SectionCar
         </h2>
         {description && <CardDescription>{description}</CardDescription>}
         {action && (
-          <CardAction>
+          <CardAction className={description ? "col-start-1 row-span-1 row-start-3 mt-1 justify-self-start sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:justify-self-end" : undefined}>
             <Link
               href={action.href}
               className="inline-flex items-center gap-1 rounded-sm text-sm font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"

@@ -7,8 +7,8 @@ import { ErrorState } from '@/components/shared/ErrorState'
 import { CardsSkeleton } from '@/components/shared/Skeletons'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { errorMessage } from '@/lib/api'
-import { formatDateTime, formatTime } from '@/lib/format'
-import { fullName } from '@/lib/people'
+import { formatFullDateTime, formatTime } from '@/lib/format'
+import { memberNames } from '@/lib/people'
 import { loadProjectGrids, type Grid } from '@/lib/grading'
 import { CreateGradingGridDialog } from './CreateGradingGridDialog'
 import { GridGradingWorkspace, type GradableGroup } from './GridGradingWorkspace'
@@ -58,7 +58,7 @@ export function DefenseGradingPanel({ projectId, groups, defenses, initialGroupI
         .sort((a, b) => (slotOf(a.id)?.orderIndex ?? Infinity) - (slotOf(b.id)?.orderIndex ?? Infinity))
         .map((group) => {
           const slot = slotOf(group.id)
-          return { id: group.id, name: group.name, note: slot ? `Passage ${slot.orderIndex}, ${formatTime(slot.startTime)}` : 'Pas de créneau' }
+          return { id: group.id, name: group.name, members: memberNames(group.members), note: slot ? `Passage ${slot.orderIndex}, ${formatTime(slot.startTime)}` : 'Pas de créneau' }
         }),
     [groups, slotOf],
   )
@@ -103,14 +103,12 @@ export function DefenseGradingPanel({ projectId, groups, defenses, initialGroupI
         initialGroupId={initialGroupId}
         onChanged={onChanged}
         renderContext={(row) => {
-          const group = groups.find((item) => item.id === row.id)
           const slot = slotOf(row.id)
           return (
             <div className="space-y-1 rounded-xl border bg-card p-4 text-sm text-card-foreground shadow-sm">
               <p className="font-medium">
-                {slot ? `Soutenance de ${row.name} : ${formatDateTime(slot.startTime)}${slot.location ? `, ${slot.location}` : ''}` : `${row.name} n’a pas de créneau de soutenance`}
+                {slot ? `Soutenance de ${row.name} : ${formatFullDateTime(slot.startTime)}${slot.location ? `, ${slot.location}` : ''}` : `${row.name} n’a pas de créneau de soutenance`}
               </p>
-              {group?.members && group.members.length > 0 && <p className="text-muted-foreground">Membres : {group.members.map(fullName).join(', ')}</p>}
             </div>
           )
         }}

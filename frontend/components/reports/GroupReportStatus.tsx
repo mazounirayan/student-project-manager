@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ApiError, apiGet } from '@/lib/api'
-import { formatDateFull, formatTime, plural } from '@/lib/format'
+import { formatShortDateTime, plural } from '@/lib/format'
 import { projectPath } from '@/lib/routes'
 import { formatDeadline, isDeadlinePassed, progressOf, type GroupReport, type ReportConfig } from '@/lib/reports'
 
@@ -37,10 +37,10 @@ export function GroupReportStatus({ projectId, groupId }: { projectId: number; g
   const progress = progressOf(config, report)
 
   return (
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border bg-muted/40 p-3">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border bg-muted/40 p-3">
       <div className="min-w-0 space-y-0.5 text-sm">
         <p className="font-medium">
-          {submitted ? `Rapport rendu le ${formatDateFull(report?.submittedAt)} à ${formatTime(report?.submittedAt)}` : closed ? 'Rapport non rendu, date limite dépassée' : `Rapport : ${progress.written} sur ${plural(progress.total, 'section')} rédigées`}
+          {submitted ? `Rapport rendu le ${formatShortDateTime(report?.submittedAt)}` : closed ? 'Rapport non rendu, date limite dépassée' : `Rapport : ${progress.written} sur ${plural(progress.total, 'section')} rédigées`}
         </p>
         {!submitted && <p className="text-muted-foreground">{config.deadline ? `Date limite : ${formatDeadline(config.deadline)}` : 'Pas de date limite'}</p>}
       </div>

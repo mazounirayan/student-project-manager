@@ -1,5 +1,5 @@
 /** Lectures communes aux écrans du rapport (enseignante et étudiants) : texte, avancement, état d’un groupe, échéance. */
-import { daysUntil, formatDateFull, formatDayMonth, formatTime } from "@/lib/format"
+import { daysUntil, formatDayMonth, formatFullDateTime, formatTime } from "@/lib/format"
 
 export interface SectionConfig {
   id: number
@@ -93,7 +93,7 @@ export const isDeadlinePassed = (deadline: string | null | undefined) =>
 
 /** « jeudi 3 décembre 2026 à 23 h 59 » */
 export function formatDeadline(deadline: string | null | undefined) {
-  return deadline ? `${formatDateFull(deadline)} à ${formatTime(deadline)}` : "Pas de date limite"
+  return deadline ? formatFullDateTime(deadline) : "Pas de date limite"
 }
 
 /** « à 14 h 32 » aujourd’hui, « le 24 nov. à 14 h 32 » un autre jour. */

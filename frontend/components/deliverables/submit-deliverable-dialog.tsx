@@ -19,7 +19,7 @@ import {
   type RuleResult,
   type Submission,
 } from "@/lib/deliverables"
-import { formatDateFull, formatDateTime, formatFileSize, formatTime } from "@/lib/format"
+import { formatFileSize, formatFullDateTime, formatShortDateTime } from "@/lib/format"
 import { submitDeliverable } from "@/services/DeliverableService"
 
 interface SubmitDeliverableDialogProps {
@@ -95,7 +95,7 @@ export function SubmitDeliverableDialog({ deliverable, groupId, existing, trigge
         file: isArchive ? file : null,
         gitUrl: isArchive ? undefined : gitUrl.trim(),
       })
-      const when = `${formatDateFull(sent.submittedAt)} à ${formatTime(sent.submittedAt)}`
+      const when = `${formatFullDateTime(sent.submittedAt)}`
       toast.success(existing ? "Rendu remplacé." : "Livrable rendu.", {
         description: sent.isLate ? `Enregistré le ${when}, en retard de ${hoursLate(deliverable.deadline, sent.submittedAt)} h.` : `Enregistré le ${when}.`,
       })
@@ -125,13 +125,13 @@ export function SubmitDeliverableDialog({ deliverable, groupId, existing, trigge
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{existing ? `Remplacer le rendu de « ${deliverable.name} »` : `Rendre « ${deliverable.name} »`}</DialogTitle>
-          <DialogDescription>Échéance : {formatDateTime(deliverable.deadline)}</DialogDescription>
+          <DialogDescription>Échéance : {formatFullDateTime(deliverable.deadline)}</DialogDescription>
         </DialogHeader>
 
         <form onSubmit={send} className="space-y-5">
           {existing && (
             <p className="text-sm text-muted-foreground">
-              Votre groupe a déjà rendu ce livrable le {formatDateTime(existing.submittedAt)}. Le nouveau rendu prendra la place du précédent.
+              Votre groupe a déjà rendu ce livrable le {formatShortDateTime(existing.submittedAt)}. Le nouveau rendu prendra la place du précédent.
             </p>
           )}
 

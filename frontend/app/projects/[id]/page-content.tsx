@@ -4,7 +4,6 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { MainLayout } from "@/components/layout/main-layout"
 import { PageContainer, PageHeader } from "@/components/layout/page"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -22,16 +21,18 @@ import type { Deliverable } from "@/lib/deliverables"
 import { TeacherReportsView } from "@/components/reports/TeacherReportsView"
 import { DefenseGradingPanel } from "@/components/grading/DefenseGradingPanel"
 import { EmptyState } from "@/components/shared/EmptyState"
+import { SectionCard } from "@/components/shared/SectionCard"
 import { ErrorState } from "@/components/shared/ErrorState"
 import { DetailSkeleton } from "@/components/shared/Skeletons"
 import { deleteProject, getProjectById, updateProject, type Project, type UpdateProjectPayload } from "@/services/project.service"
 import { promotionService, type Promotion } from "@/services/PromotionService"
-import { formatDate, formatDateLong, plural } from "@/lib/format"
+import { formatDate, formatShortDateTime, plural } from "@/lib/format"
 import { toast } from "sonner"
 import { ProjectStatusBadge } from "@/components/projects/project-status-badge"
 import { EditProjectDialog } from "@/components/projects/edit-project-dialog"
 import { ProjectOverview } from "@/components/projects/project-overview"
 import { confirmDeleteProject, confirmVisibility, groupsOf, studentsOf, ungroupedStudents, type ChecklistAction } from "@/lib/projects"
+import { useDocumentTitle } from "@/hooks/use-document-title"
 import { useRouteProjectId } from "@/lib/routes"
 
 interface ProjectPageProps {
@@ -67,6 +68,7 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
   const [notesTick, setNotesTick] = useState(0)
 
   const projectId = useRouteProjectId(params.id)
+  useDocumentTitle(project?.name)
 
   const loadProject = useCallback(async () => {
     setLoading(true)
@@ -326,15 +328,14 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
               onOpenGroups={() => changeTab("groups")}
               notesKey={notesTick}
             />
-            <Card id="notation-soutenances" className="mt-6 scroll-mt-6">
-              <CardHeader>
-                <CardTitle>Notation des soutenances</CardTitle>
-                <CardDescription>Notez chaque groupe pendant ou juste après son passage. Enregistrez un brouillon, puis validez la note.</CardDescription>
-              </CardHeader>
-              <CardContent>
+            <div id="notation-soutenances" className="mt-6 scroll-mt-6">
+              <SectionCard
+                title="Notation des soutenances"
+                description="Notez chaque groupe pendant ou juste après son passage. Enregistrez un brouillon, puis validez la note."
+              >
                 <DefenseGradingPanel projectId={project.id} groups={groups} defenses={defenses} initialGroupId={gradingGroup} onChanged={() => setNotesTick((tick) => tick + 1)} />
-              </CardContent>
-            </Card>
+              </SectionCard>
+            </div>
           </TabsContent>
 
           <TabsContent value="groups">
@@ -387,12 +388,8 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
                 )}
               </section>
 
-              <Card id="notation-livrables" className="scroll-mt-6">
-                <CardHeader>
-                  <CardTitle>Notation des livrables</CardTitle>
-                  <CardDescription>Choisissez un livrable, puis notez les groupes un à un avec son rendu sous les yeux.</CardDescription>
-                </CardHeader>
-                <CardContent>
+              <div id="notation-livrables" className="scroll-mt-6">
+                <SectionCard title="Notation des livrables" description="Choisissez un livrable, puis notez les groupes un à un avec son rendu sous les yeux.">
                   {deliverables.length === 0 ? (
                     <EmptyState
                       icon={FileText}
@@ -420,7 +417,7 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
                       {deliverables.map((d) => (
                         <TabsContent key={d.id} value={String(d.id)} className="space-y-4">
                           <p className="text-sm text-muted-foreground">
-                            Échéance : {formatDateLong(d.deadline)} · {plural(d.submissions?.length ?? 0, "rendu")} sur {plural(groups.length, "groupe")}
+                            Échéance : {formatShortDateTime(d.deadline)} · {plural(d.submissions?.length ?? 0, "rendu")} sur {plural(groups.length, "groupe")}
                           </p>
                           <DeliverableGradingPanel
                             projectId={project.id}
@@ -432,8 +429,8 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
                       ))}
                     </Tabs>
                   )}
-                </CardContent>
-              </Card>
+                </SectionCard>
+              </div>
             </div>
           </TabsContent>
 

@@ -22,7 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { errorMessage } from "@/lib/api"
 import { gradingHref, isPastDeadline, latePolicy, summarize, type Deliverable, type GroupRef, type GroupRow } from "@/lib/deliverables"
-import { formatDateFull, formatTime, plural } from "@/lib/format"
+import { formatFullDateTime, plural } from "@/lib/format"
 import { projectPath } from "@/lib/routes"
 import { fetchMyProjects, getProjectById, type Project } from "@/services/project.service"
 
@@ -195,8 +195,8 @@ function DeliverablesPageContent() {
                 <SectionCard
                   key={deliverable.id}
                   title={deliverable.name}
-                  description={`Échéance : ${formatDateFull(deliverable.deadline)} à ${formatTime(deliverable.deadline)}`}
-                  action={{ href: manageHref, label: "Gérer le livrable" }}
+                  description={`Échéance : ${formatFullDateTime(deliverable.deadline)}`}
+                  action={{ href: manageHref, label: "Gérer les livrables" }}
                 >
                   <div className="space-y-4">
                     <div className="space-y-2">

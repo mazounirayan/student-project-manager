@@ -110,11 +110,6 @@ export async function downloadFile(path: string, fallbackName: string): Promise<
   URL.revokeObjectURL(url);
 }
 
-/** Lève une ApiError portant le message français de l’API si la réponse n’est pas un succès. */
-export async function assertOk(res: Response): Promise<void> {
-  if (!res.ok) throw await toApiError(res);
-}
-
 /** Message d’une erreur à afficher : celui de l’API s’il existe, sinon le texte de repli. */
 export function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;

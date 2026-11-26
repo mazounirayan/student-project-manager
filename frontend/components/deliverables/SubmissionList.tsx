@@ -12,9 +12,8 @@ import {
   type GroupRef,
   type GroupRow,
 } from "@/lib/deliverables"
-import { formatDayMonth, formatTime } from "@/lib/format"
-
-const memberNames = (group: GroupRef) => (group.members ?? []).map((member) => `${member.firstName} ${member.lastName}`.trim()).join(", ")
+import { formatShortDateTime } from "@/lib/format"
+import { memberNames } from "@/lib/people"
 
 interface SubmissionListProps {
   deliverable: Deliverable
@@ -49,9 +48,7 @@ export function SubmissionList({ deliverable, groups, onlyAttention = false, onO
           <li key={group.id} className="grid items-start gap-x-6 gap-y-3 py-3 first:pt-0 last:pb-0 md:grid-cols-[13rem_minmax(0,1fr)_auto]">
             <div className="min-w-0">
               <p className="font-medium">{group.name}</p>
-              <p className="text-xs text-muted-foreground">
-                {submission ? `Rendu le ${formatDayMonth(submission.submittedAt)} à ${formatTime(submission.submittedAt)}` : memberNames(group)}
-              </p>
+              {group.members && group.members.length > 0 && <p className="text-xs text-muted-foreground">{memberNames(group.members)}</p>}
             </div>
 
             <div className="flex min-w-0 flex-col items-start gap-1.5">
@@ -60,6 +57,7 @@ export function SubmissionList({ deliverable, groups, onlyAttention = false, onO
                 {submission && <ConformityBadge deliverable={deliverable} submission={submission} />}
                 {submission && <SimilarityBadge submission={submission} />}
               </div>
+              {submission && <p className="text-xs text-muted-foreground">Rendu le {formatShortDateTime(submission.submittedAt)}</p>}
               {match && (
                 <p className="text-xs text-muted-foreground">
                   Proche du rendu de {match.groupName ?? "un autre groupe"} ({similarityPercent(match.score)}). À examiner avant toute conclusion.

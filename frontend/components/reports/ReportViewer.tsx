@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { GradeStateBadge } from '@/components/grading/GradeStateBadge'
 import { downloadFile, errorMessage } from '@/lib/api'
 import { STATIC_DEMO } from '@/lib/demo/mode'
-import { formatDateFull, formatDateTime, formatNumber, formatTime, plural } from '@/lib/format'
+import { formatNumber, formatShortDateTime, plural } from '@/lib/format'
 import { gradeState } from '@/lib/grading'
 import { fullName } from '@/lib/people'
 import {
@@ -91,7 +91,7 @@ export function ReportViewer({ row, config, children }: ReportViewerProps) {
           <Fact label="Rédigé">
             {progress.written} sur {plural(progress.total, 'section')} · {plural(progress.words, 'mot')}
           </Fact>
-          <Fact label="Dernière activité">{row.lastActivity ? formatDateTime(row.lastActivity) : '–'}</Fact>
+          <Fact label="Dernière activité">{row.lastActivity ? formatShortDateTime(row.lastActivity) : '–'}</Fact>
           <Fact label="Note">
             {grade ? (
               <span className="flex flex-wrap items-center gap-2 tabular-nums">
@@ -106,7 +106,7 @@ export function ReportViewer({ row, config, children }: ReportViewerProps) {
 
         <p className="rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
           {row.state === 'submitted'
-            ? `Rendu le ${formatDateFull(report.submittedAt)} à ${formatTime(report.submittedAt)}. Le texte ci-dessous est définitif.`
+            ? `Rendu le ${formatShortDateTime(report.submittedAt)}. Le texte ci-dessous est définitif.`
             : row.overdue
               ? `Non rendu : la date limite (${formatDeadline(config.deadline)}) est passée. Vous lisez la dernière version enregistrée.`
               : 'Le groupe n’a pas encore rendu son rapport : le texte peut encore changer.'}
@@ -200,7 +200,7 @@ function SectionReading({ index, section, content }: { index: number; section: S
         <>
           <ReportContent className="max-w-[46rem] rounded-xl border bg-card px-5 py-4">{content!.content}</ReportContent>
           <p className="text-xs text-muted-foreground">
-            Dernière modification le {formatDateTime(content!.updatedAt)}
+            Dernière modification le {formatShortDateTime(content!.updatedAt)}
             {content!.updatedBy && ` par ${fullName(content!.updatedBy)}`}
           </p>
         </>

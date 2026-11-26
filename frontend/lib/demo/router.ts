@@ -629,13 +629,13 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       const user = requireUser(db, init, headers)
       if (user.role === "teacher") {
         const projects = db.projects.filter((p) => p.teacherId === user.id)
-        return json(projects.map((p) => serializeProjectSummary(db, p)))
+        return json(projects.map((p) => serializeProjectSummary(db, p, user)))
       }
       const myPromotions = db.promotions.filter((p) => p.studentIds.includes(user.id))
       const projects = db.projects.filter(
         (p) => p.status === "visible" && myPromotions.some((promo) => promo.id === p.promotionId)
       )
-      return json(projects.map((p) => serializeProjectSummary(db, p)))
+      return json(projects.map((p) => serializeProjectSummary(db, p, user)))
     }
     m = /^\/projects\/(\d+)$/.exec(route)
     if (m && method === "GET") {
@@ -929,7 +929,7 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       if (!deliverable) return fail(404, "Livrable introuvable.")
       const groupId = idsFromForm(form, "groupId")[0]
       const group = db.groups.find((g) => g.id === groupId && g.memberIds.includes(student.id))
-      if (!group) return fail(403, "Soumission autorisée uniquement pour votre propre groupe.")
+      if (!group) return fail(403, "Vous ne pouvez rendre que pour votre propre groupe.")
       const file = formDataFile(form)
       const gitUrl = formDataGitUrl(form)
       if (!file && !gitUrl) return fail(400, "Aucun fichier ni lien Git fourni.")
@@ -965,7 +965,7 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       const owner = requireTeacher(db, init, headers)
       assertOwnsDeliverable(db, owner, Number(m![1]))
       const submission = db.submissions.find((s) => s.deliverableId === Number(m![1]) && s.groupId === Number(m![2]))
-      if (!submission) return fail(404, "Aucune soumission pour ce groupe.")
+      if (!submission) return fail(404, "Aucun rendu pour ce groupe.")
       return json(serializeSubmission(db, submission, true))
     }
     m = /^\/deliverables\/(\d+)\/analyze-similarity$/.exec(route)
@@ -985,7 +985,7 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
     if (m && method === "GET") {
       requireTeacher(db, init, headers)
       const submission = db.submissions.find((s) => s.id === Number(m![1]))
-      if (!submission) return fail(404, "Soumission introuvable.")
+      if (!submission) return fail(404, "Rendu introuvable.")
       const others = db.submissions.filter((s) => s.deliverableId === submission.deliverableId && s.id !== submission.id)
       return json({
         submission: { id: submission.id, similarityScore: submission.similarityScore ?? 0 },
@@ -1355,7 +1355,7 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
     if (m && method === "POST") {
       const student = requireStudent(db, init, headers)
       const group = db.groups.find((g) => g.id === Number(m![1]) && g.projectId === Number(m![2]))
-      if (!group?.memberIds.includes(student.id)) return fail(403, "Soumission autorisée uniquement pour votre groupe.")
+      if (!group?.memberIds.includes(student.id)) return fail(403, "Vous ne pouvez rendre que pour votre propre groupe.")
       const report = findOrCreateReport(db, group)
       if (report.status === "submitted") return fail(409, "Le rapport a déjà été rendu")
       const config = db.reportConfigs.find((c) => c.projectId === group.projectId)

@@ -15,7 +15,7 @@ import { DashboardSkeleton, QuietEmpty, RowLink, useOverview } from "@/component
 import { DefenseWhenBadge } from "@/components/projects/StudentDefenseCard"
 import { positionLabel } from "@/lib/defenses"
 import { loadStudentOverview, type StudentOverview, type StudentTask } from "@/lib/dashboard"
-import { formatDate, formatDateFull, formatDateTime, formatNumber, gridTypeLabel } from "@/lib/format"
+import { formatDate, formatDateFull, formatFullDateTime, formatNumber, formatShortDateTime, gridTypeLabel } from "@/lib/format"
 
 const MAX_NEXT_TASKS = 4
 const MAX_GRADES = 3
@@ -81,7 +81,7 @@ function Overview({ data }: { data: StudentOverview }) {
                 {next.dueAt ? (
                   <>
                     <DueBadge date={next.dueAt} />
-                    <span className="text-muted-foreground">{formatDateTime(next.dueAt)}</span>
+                    <span className="text-muted-foreground">{formatFullDateTime(next.dueAt)}</span>
                   </>
                 ) : (
                   <span className="text-muted-foreground">Pas d’échéance fixée</span>
@@ -114,7 +114,7 @@ function Overview({ data }: { data: StudentOverview }) {
                   aside={
                     task.dueAt && (
                       <>
-                        <span className="text-xs text-muted-foreground">{formatDate(task.dueAt)}</span>
+                        <span className="text-xs text-muted-foreground">{formatShortDateTime(task.dueAt)}</span>
                         <DueBadge date={task.dueAt} />
                       </>
                     )
@@ -165,7 +165,7 @@ function Overview({ data }: { data: StudentOverview }) {
               className="-m-2 block rounded-md p-2 outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring"
             >
               <span className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-sm font-medium">{formatDateTime(data.defense.startTime)}</span>
+                <span className="text-sm font-medium">{formatFullDateTime(data.defense.startTime)}</span>
                 <DefenseWhenBadge startTime={data.defense.startTime} status={new Date(data.defense.startTime).getTime() <= Date.now() ? "live" : "upcoming"} />
               </span>
               <span className="block text-xs text-muted-foreground">

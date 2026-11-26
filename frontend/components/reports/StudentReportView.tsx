@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { ApiError, apiGet, apiPost, errorMessage } from '@/lib/api'
 import { confirmAction } from '@/lib/dialogs'
-import { formatDateFull, formatDateTime, formatTime, plural } from '@/lib/format'
+import { formatShortDateTime, plural } from '@/lib/format'
 import { fullName } from '@/lib/people'
 import {
   contentOf,
@@ -197,7 +197,7 @@ export function StudentReportView({ projectId, groupId }: StudentReportViewProps
           <div className="space-y-1 rounded-lg border bg-muted/40 p-4">
             <p className="flex items-center gap-2 text-sm font-medium">
               <CheckCircle2 aria-hidden="true" className="h-4 w-4 text-primary" />
-              Rapport rendu le {formatDateFull(report?.submittedAt)} à {formatTime(report?.submittedAt)}
+              Rapport rendu le {formatShortDateTime(report?.submittedAt)}
             </p>
             <p className="text-sm text-muted-foreground">Il est en lecture seule : votre enseignant le lira et le notera.</p>
           </div>
@@ -301,7 +301,7 @@ function SectionReading({ position, section, content }: { position: number; sect
         <>
           <ReportContent className="max-w-[46rem]">{content!.content}</ReportContent>
           <p className="text-xs text-muted-foreground">
-            {plural(countWords(content!.content), 'mot')} · dernière modification le {formatDateTime(content!.updatedAt)}
+            {plural(countWords(content!.content), 'mot')} · dernière modification le {formatShortDateTime(content!.updatedAt)}
             {content!.updatedBy && ` par ${fullName(content!.updatedBy)}`}
           </p>
         </>

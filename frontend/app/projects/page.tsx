@@ -333,7 +333,7 @@ function ProjectCard({ project, onEdit, onToggleVisibility, onDelete }: ProjectC
             </Link>
           </p>
         ) : (
-          <QuietEmpty done>Groupes constitués, livrables définis, projet visible.</QuietEmpty>
+          <QuietEmpty done>Toutes les étapes sont faites : le projet est prêt.</QuietEmpty>
         )}
       </CardContent>
     </Card>

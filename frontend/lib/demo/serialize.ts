@@ -94,7 +94,23 @@ export function serializeDeliverable(
   }
 }
 
-export function serializeProjectSummary(db: DemoDb, project: DemoProject): Record<string, unknown> {
+/** Le rapport est « demandé » quand il est ouvert ; les sections et la date limite disent s’il est prêt. */
+function serializeReportSummary(db: DemoDb, projectId: number) {
+  const config = db.reportConfigs.find((c) => c.projectId === projectId)
+  return { isEnabled: config?.isEnabled ?? false, deadline: config?.deadline ?? null, sectionCount: config?.sections.length ?? 0 }
+}
+
+const sortedDefenses = (db: DemoDb, projectId: number) =>
+  db.defenses
+    .filter((d) => d.projectId === projectId)
+    .sort((a, b) => a.orderIndex - b.orderIndex)
+    .map((d) => serializeDefense(db, d))
+
+/**
+ * Projet tel que la liste le renvoie. Avec `viewer`, la liste porte aussi les soutenances et, pour l’enseignant,
+ * les grilles et le rapport : de quoi dire où en est chaque projet sans charger son détail.
+ */
+export function serializeProjectSummary(db: DemoDb, project: DemoProject, viewer?: DemoUser): Record<string, unknown> {
   const promotion = db.promotions.find((p) => p.id === project.promotionId)
   const groups = db.groups.filter((g) => g.projectId === project.id)
   const deliverables = db.deliverables.filter((d) => d.projectId === project.id)
@@ -115,6 +131,11 @@ export function serializeProjectSummary(db: DemoDb, project: DemoProject): Recor
       : null,
     groups: groups.map((g) => serializeGroup(db, g)),
     deliverables: deliverables.map((d) => serializeDeliverable(db, d, undefined, false)),
+    ...(viewer && { defenses: sortedDefenses(db, project.id) }),
+    ...(viewer?.role === "teacher" && {
+      gradingGrids: db.grids.filter((g) => g.projectId === project.id).map((g) => serializeGrid(db, g)),
+      reportConfig: serializeReportSummary(db, project.id),
+    }),
     teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : "",
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
@@ -196,7 +217,10 @@ export function serializeProjectDetail(db: DemoDb, project: DemoProject, viewer:
     deliverables: deliverables.map((d) => serializeDeliverable(db, d, ownGroupIds)),
     reports: reports.map((r) => serializeReport(db, r)),
     defenses: defenses.map((d) => serializeDefense(db, d)),
-    gradingGrids: grids.map((g) => serializeGrid(db, g)),
+    ...(viewer.role === "teacher" && {
+      gradingGrids: grids.map((g) => serializeGrid(db, g)),
+      reportConfig: serializeReportSummary(db, project.id),
+    }),
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
   }

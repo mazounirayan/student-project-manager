@@ -127,7 +127,7 @@ export class DeliverableService {
       where: { deliverable: { id: deliverableId }, group: { id: groupId } },
       relations: ['group', 'deliverable'],
     });
-    if (!submission) throw notFound('Aucune soumission pour ce groupe');
+    if (!submission) throw notFound('Aucun rendu pour ce groupe');
     const peers = await submissions().find({ where: { deliverable: { id: deliverableId } }, relations: ['group'] });
     return serializeSubmission(submission, { teacher: true, peers });
   }
@@ -135,7 +135,7 @@ export class DeliverableService {
   /** Fichier d'une soumission, réservé à l'enseignant du projet et aux membres du groupe. */
   async getSubmissionFile(submissionId: number, actor: Actor): Promise<{ path: string; name: string }> {
     const submission = await submissions().findOne({ where: { id: submissionId }, relations: ['group'] });
-    if (!submission?.filePath) throw notFound('Fichier de soumission introuvable');
+    if (!submission?.filePath) throw notFound('Fichier du rendu introuvable');
     await findGroupForActor(submission.group.id, actor);
 
     const file = path.resolve(submission.filePath);
@@ -229,7 +229,7 @@ export class DeliverableService {
 
   async getSimilarity(submissionId: number, teacherId: number) {
     const submission = await submissions().findOne({ where: { id: submissionId }, relations: ['deliverable', 'group'] });
-    if (!submission) throw notFound('Soumission introuvable');
+    if (!submission) throw notFound('Rendu introuvable');
     await this.findOwnedDeliverable(submission.deliverable.id, teacherId);
 
     const others = await submissions().find({ where: { deliverable: { id: submission.deliverable.id } } });

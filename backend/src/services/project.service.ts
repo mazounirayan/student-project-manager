@@ -1,5 +1,6 @@
 import { AppDataSource } from '../database/data-source';
-import { DeliverableSubmission, Project, Promotion } from '../entities/Entities';
+import { In } from 'typeorm';
+import { DeliverableSubmission, Project, Promotion, ReportConfig } from '../entities/Entities';
 import { badRequest, forbidden } from '../utils/http-error';
 import { pick } from '../utils/pick';
 import { EmailService } from '../utils/email.service';
@@ -32,6 +33,24 @@ const editableFields = (data: ProjectInput) => {
 };
 
 const projects = () => AppDataSource.getRepository(Project);
+
+/** Le rapport est « demandé » quand il est ouvert ; les sections et la date limite disent s'il est prêt. */
+interface ReportSummary { isEnabled: boolean; deadline: Date | null; sectionCount: number }
+
+const NO_REPORT: ReportSummary = { isEnabled: false, deadline: null, sectionCount: 0 };
+
+async function reportSummaries(projectIds: number[]): Promise<Map<number, ReportSummary>> {
+  if (projectIds.length === 0) return new Map();
+  const configs = await AppDataSource.getRepository(ReportConfig).find({
+    where: { project: { id: In(projectIds) } },
+    relations: ['project', 'sections'],
+  });
+  return new Map(configs.map(config => [config.project.id, {
+    isEnabled: config.isEnabled, deadline: config.deadline ?? null, sectionCount: config.sections?.length ?? 0,
+  }]));
+}
+
+const sortedDefenses = (project: Project) => [...(project.defenses ?? [])].sort((a, b) => a.orderIndex - b.orderIndex).map(serializeDefense);
 
 function summarize(project: Project) {
   return {
@@ -100,15 +119,16 @@ export class ProjectService {
     if (actor.role === 'teacher') {
       const list = await projects().find({
         where: { teacher: { id: actor.id } },
-        relations: ['teacher', 'promotion', 'promotion.students', 'groups', 'groups.members', 'deliverables'],
+        relations: ['teacher', 'promotion', 'promotion.students', 'groups', 'groups.members', 'deliverables', 'defenses', 'defenses.group', 'gradingGrids'],
         order: { createdAt: 'DESC' },
       });
-      return list.map(project => this.serializeListItem(project, true));
+      const reports = await reportSummaries(list.map(project => project.id));
+      return list.map(project => this.serializeListItem(project, true, reports.get(project.id)));
     }
 
     const list = await projects().find({
       where: { status: 'visible', promotion: { students: { id: actor.id } } },
-      relations: ['teacher', 'promotion', 'groups', 'groups.members', 'deliverables'],
+      relations: ['teacher', 'promotion', 'groups', 'groups.members', 'deliverables', 'defenses', 'defenses.group'],
       order: { createdAt: 'DESC' },
     });
     return list.map(project => this.serializeListItem(project, false));
@@ -141,12 +161,14 @@ export class ProjectService {
       deliverables: project.deliverables.map(deliverable =>
         serializeDeliverable(deliverable, visibleToActor(deliverable.submissions), actor.role === 'teacher')),
       reports: visibleToActor(project.reports).map(serializeReport),
-      defenses: [...project.defenses].sort((a, b) => a.orderIndex - b.orderIndex).map(serializeDefense),
+      defenses: sortedDefenses(project),
       gradingGrids: actor.role === 'teacher' ? project.gradingGrids.map(serializeGrid) : undefined,
+      reportConfig: actor.role === 'teacher' ? (await reportSummaries([project.id])).get(project.id) ?? NO_REPORT : undefined,
     };
   }
 
-  private serializeListItem(project: Project, isOwner: boolean) {
+  /** Liste : de quoi dire où en est chaque projet (groupes, livrables, soutenances et, pour l'enseignant, grilles et rapport). */
+  private serializeListItem(project: Project, isOwner: boolean, report: ReportSummary = NO_REPORT) {
     return {
       ...summarize(project),
       promotion: project.promotion && {
@@ -156,6 +178,8 @@ export class ProjectService {
       },
       groups: project.groups.map(serializeGroup),
       deliverables: project.deliverables.map(deliverable => serializeDeliverable(deliverable, [])),
+      defenses: sortedDefenses(project),
+      ...(isOwner && { gradingGrids: project.gradingGrids.map(serializeGrid), reportConfig: report }),
     };
   }
 

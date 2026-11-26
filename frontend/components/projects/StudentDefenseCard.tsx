@@ -5,7 +5,7 @@ import { DueBadge } from "@/components/shared/DueBadge"
 import { SectionCard } from "@/components/shared/SectionCard"
 import { Badge } from "@/components/ui/badge"
 import { countdownLabel, durationOf, formatDuration, positionLabel, slotRange, studentSlot, type DefenseSlot, type DefenseStatus } from "@/lib/defenses"
-import { formatDateFull, formatTime } from "@/lib/format"
+import { formatFullDateTime } from "@/lib/format"
 
 /** Où en est la soutenance : un délai tant qu’elle n’a pas commencé, sinon « en cours » ou « passée ». */
 export function DefenseWhenBadge({ startTime, status }: { startTime: string; status: DefenseStatus }) {
@@ -43,10 +43,7 @@ export function StudentDefenseCard({ defenses, groupId }: StudentDefenseCardProp
       ) : (
         <div className="space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <p className="font-medium">{formatDateFull(found.slot.startTime)}</p>
-              <p className="text-sm text-muted-foreground">à {formatTime(found.slot.startTime)}</p>
-            </div>
+            <p className="font-medium">{formatFullDateTime(found.slot.startTime)}</p>
             <DefenseWhenBadge startTime={found.slot.startTime} status={found.status} />
           </div>
 
@@ -90,12 +87,12 @@ export function StudentDefenseBanner({ defenses, groupId, href }: DefenseBannerP
   if (!found) return null
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border bg-card p-4 text-card-foreground shadow-sm">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border bg-muted/40 p-3">
       <div className="flex min-w-0 items-start gap-3">
         <CalendarClock aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
           <p className="text-sm font-medium">
-            Votre soutenance : {formatDateFull(found.slot.startTime)} à {formatTime(found.slot.startTime)}
+            Votre soutenance : {formatFullDateTime(found.slot.startTime)}
           </p>
           <p className="text-xs text-muted-foreground">
             {found.slot.location ? `${found.slot.location} · ` : ""}

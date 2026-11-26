@@ -9,6 +9,7 @@ import { SimilarityBadge, SubmissionStatus } from "@/components/deliverables/Sub
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { downloadFile, errorMessage } from "@/lib/api"
+import { memberNames } from "@/lib/people"
 import {
   conformityOf,
   formatPoints,
@@ -20,7 +21,7 @@ import {
   type GroupRef,
   type Submission,
 } from "@/lib/deliverables"
-import { formatDateFull, formatDateTime, formatFileSize, formatTime } from "@/lib/format"
+import { formatDateFull, formatFileSize, formatFullDateTime, formatShortDateTime } from "@/lib/format"
 
 interface DeliverableGroupDetailsProps {
   deliverable: Deliverable
@@ -79,7 +80,7 @@ export function DeliverableGroupDetails({ deliverable, group, submission, onClos
           <div>
             <dt className="text-xs text-muted-foreground">Déposé le</dt>
             <dd className="font-medium">
-              {formatDateFull(submission.submittedAt)} à {formatTime(submission.submittedAt)}
+              {formatFullDateTime(submission.submittedAt)}
             </dd>
           </div>
           <div>
@@ -88,7 +89,7 @@ export function DeliverableGroupDetails({ deliverable, group, submission, onClos
               <SubmissionStatus deliverable={deliverable} submission={submission} />
               {submission.isLate && (
                 <p className="text-muted-foreground">
-                  {hoursLate(deliverable.deadline, submission.submittedAt)} h après le {formatDateTime(deliverable.deadline)}
+                  {hoursLate(deliverable.deadline, submission.submittedAt)} h après le {formatShortDateTime(deliverable.deadline)}
                   {penalty > 0 && `, soit ${formatPoints(penalty)} à retirer de la note`}.
                 </p>
               )}
@@ -194,7 +195,10 @@ export function SubmissionDetailsDialog({ open, onOpenChange, ...details }: Subm
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{details.group.name}</DialogTitle>
-          <DialogDescription>{details.deliverable.name}</DialogDescription>
+          <DialogDescription>
+            {details.deliverable.name}
+            {details.group.members && details.group.members.length > 0 ? ` · ${memberNames(details.group.members)}` : ""}
+          </DialogDescription>
         </DialogHeader>
         <DeliverableGroupDetails {...details} onClose={() => onOpenChange(false)} />
       </DialogContent>

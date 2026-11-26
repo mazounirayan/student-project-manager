@@ -135,13 +135,55 @@ export function summaryState(grade: SummaryGrade | undefined): GradeState {
   return grade.isPublished ? "published" : "validated"
 }
 
-/** Combien de notes (une par groupe et par grille) sont à saisir, validées, publiées. */
-export function progressOf(summary: ProjectSummary): GradeCounts & { total: number } {
-  const counts = emptyCounts()
-  for (const group of summary.groups) {
-    for (const grid of summary.gradingGrids) counts[summaryState(group.grades.find((grade) => grade.gridId === grid.id))] += 1
+/** Ce qu’il faut savoir d’un projet pour dire si un groupe a produit de quoi être noté (voir GET /projects/:id). */
+export interface GradableWork {
+  deliverables: Array<{ id: number; submissions?: Array<{ groupId?: number | null }> }>
+  reports: Array<{ groupId: number; status: string }>
+  defenses: Array<{ groupId: number; startTime: string }>
+}
+
+/** Le travail d’un groupe est prêt : livrable rendu, rapport rendu, ou soutenance commencée ou passée. */
+export function isReadyToGrade(work: GradableWork, grid: { type: GridType; deliverableId?: number | null }, groupId: number, now = Date.now()): boolean {
+  switch (grid.type) {
+    case "deliverable":
+      return work.deliverables
+        .filter((deliverable) => !grid.deliverableId || deliverable.id === grid.deliverableId)
+        .some((deliverable) => (deliverable.submissions ?? []).some((submission) => submission.groupId === groupId))
+    case "report":
+      return work.reports.some((report) => report.groupId === groupId && report.status === "submitted")
+    case "defense":
+      return work.defenses.some((defense) => defense.groupId === groupId && new Date(defense.startTime).getTime() <= now)
   }
-  return { ...counts, total: summary.groups.length * summary.gradingGrids.length }
+}
+
+/**
+ * Une note est « à noter » quand le travail est prêt et que la note n’est pas encore validée (aucune note, ou un brouillon).
+ * Même règle pour le compteur de l’accueil et celui de la page Évaluations.
+ */
+export const awaitsGrade = (state: GradeState, ready: boolean) => ready && (state === "none" || state === "draft")
+
+/** Textes qui disent pourquoi une note n’est pas encore à saisir. */
+export const NOT_READY_LABELS: Record<GridType, string> = {
+  deliverable: "Pas encore rendu",
+  report: "Rapport pas encore rendu",
+  defense: "Pas encore passée",
+}
+
+/**
+ * Combien de notes (une par groupe et par grille) sont à saisir, validées, publiées. `todo` ne compte que celles dont le travail est prêt ;
+ * sans le détail du projet (`work`), tout est considéré comme prêt.
+ */
+export function progressOf(summary: ProjectSummary, work?: GradableWork | null, now = Date.now()): GradeCounts & { total: number; todo: number } {
+  const counts = emptyCounts()
+  let todo = 0
+  for (const group of summary.groups) {
+    for (const grid of summary.gradingGrids) {
+      const state = summaryState(group.grades.find((grade) => grade.gridId === grid.id))
+      counts[state] += 1
+      if (awaitsGrade(state, work ? isReadyToGrade(work, grid, group.id, now) : true)) todo += 1
+    }
+  }
+  return { ...counts, total: summary.groups.length * summary.gradingGrids.length, todo }
 }
 
 // ----- Côté étudiant (page « Mes notes ») -----

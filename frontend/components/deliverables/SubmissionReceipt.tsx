@@ -1,7 +1,7 @@
 import { CheckCircle2 } from "lucide-react"
 import { RuleResults } from "@/components/deliverables/RuleResults"
 import { conformityOf, formatPoints, hoursLate, isPastDeadline, type Deliverable, type Submission } from "@/lib/deliverables"
-import { formatDateFull, formatFileSize, formatTime } from "@/lib/format"
+import { formatFileSize, formatFullDateTime } from "@/lib/format"
 
 /** Accusé de réception d’un rendu : quand il est arrivé, s’il est en retard (et la pénalité), ce qui a été déposé, et le résultat des règles. */
 export function SubmissionReceipt({ deliverable, submission }: { deliverable: Deliverable; submission: Submission }) {
@@ -13,7 +13,7 @@ export function SubmissionReceipt({ deliverable, submission }: { deliverable: De
       <div className="space-y-1">
         <p className="flex items-center gap-2 text-sm font-medium">
           <CheckCircle2 aria-hidden="true" className="h-4 w-4 text-primary" />
-          Rendu enregistré le {formatDateFull(submission.submittedAt)} à {formatTime(submission.submittedAt)}
+          Rendu enregistré le {formatFullDateTime(submission.submittedAt)}
         </p>
         {submission.isLate ? (
           <p className="text-sm text-destructive">
@@ -21,7 +21,7 @@ export function SubmissionReceipt({ deliverable, submission }: { deliverable: De
             {penalty > 0 ? ` : ${formatPoints(penalty)} seront retirés de la note.` : ", sans pénalité."}
           </p>
         ) : (
-          <p className="text-sm text-muted-foreground">Dans les délais.</p>
+          <p className="text-sm text-muted-foreground">Rendu à l’heure.</p>
         )}
         {submission.fileName && (
           <p className="break-all text-sm text-muted-foreground">

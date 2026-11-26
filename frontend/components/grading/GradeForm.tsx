@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { errorMessage } from '@/lib/api'
 import { confirmAction } from '@/lib/dialogs'
-import { formatDateTime, formatNumber, plural } from '@/lib/format'
+import { formatNumber, formatShortDateTime, plural } from '@/lib/format'
 import {
   criterionShares,
   draftFrom,
@@ -32,7 +32,7 @@ import { GradeStateBadge } from './GradeStateBadge'
 interface GradeFormProps {
   projectId: number
   grid: Grid
-  group: { id: number; name: string }
+  group: { id: number; name: string; members?: string }
   session: Session | null
   onSaved: (session: Session) => void
   onDirtyChange?: (dirty: boolean) => void
@@ -142,6 +142,7 @@ export function GradeForm({ projectId, grid, group, session, onSaved, onDirtyCha
             <h3 className="text-base font-semibold leading-snug">{group.name}</h3>
             <GradeStateBadge state={state} />
           </div>
+          {group.members && <p className="text-sm text-muted-foreground">{group.members}</p>}
           <p className="text-sm text-muted-foreground">
             {grid.name} · {GRADE_STATE_HINTS[state]}
           </p>
@@ -262,12 +263,12 @@ export function GradeForm({ projectId, grid, group, session, onSaved, onDirtyCha
             {locked ? (
               <>
                 <Lock aria-hidden="true" className="h-3.5 w-3.5" />
-                {state === 'published' ? `Publiée le ${formatDateTime(session?.publishedAt)}` : `Validée le ${formatDateTime(session?.validatedAt)}`}
+                {state === 'published' ? `Publiée le ${formatShortDateTime(session?.publishedAt)}` : `Validée le ${formatShortDateTime(session?.validatedAt)}`}
               </>
             ) : dirty ? (
               'Modifications non enregistrées'
             ) : session ? (
-              `Brouillon enregistré le ${formatDateTime(session.gradedAt)}`
+              `Brouillon enregistré le ${formatShortDateTime(session.gradedAt)}`
             ) : (
               'Pas encore enregistrée'
             )}

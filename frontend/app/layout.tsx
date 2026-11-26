@@ -8,10 +8,11 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import { ConfirmHost } from "@/components/ui/confirm-host"
 import { Suspense } from "react"
+import { APP_NAME } from "@/lib/app"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "Gestionnaire de projets étudiants",
+  title: { default: APP_NAME, template: `%s · ${APP_NAME}` },
   description: "Promotions, projets, groupes, livrables, rapports, soutenances et notation pour les enseignants et les étudiants.",
   icons: { icon: "/favicon.svg" },
 }

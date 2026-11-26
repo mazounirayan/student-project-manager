@@ -26,12 +26,6 @@ export function formatDayMonth(value: DateInput, fallback = UNKNOWN_DATE) {
   return date ? date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) : fallback
 }
 
-/** « 18 novembre 2026 » */
-export function formatDateLong(value: DateInput, fallback = UNKNOWN_DATE) {
-  const date = toDate(value)
-  return date ? date.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : fallback
-}
-
 /** « jeudi 26 novembre 2026 » */
 export function formatDateFull(value: DateInput, fallback = UNKNOWN_DATE) {
   const date = toDate(value)
@@ -45,10 +39,16 @@ export function formatTime(value: DateInput, fallback = "–") {
   return date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }).replace(":", " h ")
 }
 
-/** « 18 novembre 2026 à 14 h 30 » */
-export function formatDateTime(value: DateInput, fallback = UNKNOWN_DATE) {
+/** « 18 nov. à 23 h 00 » : dates des listes et des phrases. */
+export function formatShortDateTime(value: DateInput, fallback = UNKNOWN_DATE) {
   const date = toDate(value)
-  return date ? `${formatDateLong(date)} à ${formatTime(date)}` : fallback
+  return date ? `${formatDayMonth(date)} à ${formatTime(date)}` : fallback
+}
+
+/** « jeudi 19 novembre 2026 à 23 h 00 » : échéances mises en avant. */
+export function formatFullDateTime(value: DateInput, fallback = UNKNOWN_DATE) {
+  const date = toDate(value)
+  return date ? `${formatDateFull(date)} à ${formatTime(date)}` : fallback
 }
 
 /** Nombre de jours entiers avant une échéance (négatif si elle est dépassée), null si la date est inconnue. */
@@ -71,12 +71,6 @@ export function formatRelativeDay(value: DateInput): string {
 export function formatNumber(value: number | null | undefined, digits = 1) {
   if (value === null || value === undefined || Number.isNaN(value)) return "–"
   return value.toLocaleString("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits })
-}
-
-/** Part en pourcentage à partir d’un ratio (0,25 → « 25 % »), espace insécable avant le symbole. */
-export function formatPercent(ratio: number | null | undefined, digits = 0) {
-  if (ratio === null || ratio === undefined || Number.isNaN(ratio)) return "–"
-  return `${formatNumber(ratio * 100, digits)} %`
 }
 
 /** « 1 groupe », « 0 groupe », « 3 groupes » (le zéro est au singulier en français). */

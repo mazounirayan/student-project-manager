@@ -18,6 +18,8 @@ import { GradeStateBadge } from './GradeStateBadge'
 export interface GradableGroup {
   id: number
   name: string
+  /** Membres du groupe, « Alex Moret, Brice Lemaire ». */
+  members?: string
   /** Précision affichée sous le nom (« Rendu le 12 nov. », « Pas de rendu »…). */
   note?: string
 }

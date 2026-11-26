@@ -21,12 +21,15 @@ import { apiGet, downloadFile, errorMessage } from "@/lib/api"
 import { gradingHref } from "@/lib/deliverables"
 import { formatNumber, gridTypeLabel, plural } from "@/lib/format"
 import {
+  NOT_READY_LABELS,
   defenseGradingHref,
   gridSetupHref,
+  isReadyToGrade,
   percentOf,
   progressOf,
   publishGrades,
   summaryState,
+  type GradableWork,
   type GradeState,
   type ProjectSummary,
   type SummaryGrid,
@@ -35,7 +38,7 @@ import {
 import { reportHash } from "@/lib/reports"
 import { projectPath } from "@/lib/routes"
 import { cn } from "@/lib/utils"
-import { fetchMyProjects, type Project } from "@/services/project.service"
+import { fetchMyProjects, getProjectById, type Project } from "@/services/project.service"
 
 export default function GradingSummaryPage() {
   return (
@@ -46,16 +49,18 @@ export default function GradingSummaryPage() {
 }
 
 type Summaries = Record<number, ProjectSummary | null>
+/** Ce que chaque projet a reçu (rendus, rapports, soutenances) : il dit quels travaux sont prêts à être notés. */
+type Works = Record<number, GradableWork | null>
 
 /** Projet à ouvrir en premier : celui de l’adresse (?project=), sinon le premier qui demande encore du travail. */
-function firstProject(projects: Project[], summaries: Summaries): number | null {
+function firstProject(projects: Project[], summaries: Summaries, works: Works): number | null {
   const wanted = Number(new URLSearchParams(window.location.search).get("project"))
   if (projects.some((project) => project.id === wanted)) return wanted
   const busy = projects.find((project) => {
     const summary = summaries[project.id]
     if (!summary) return false
-    const progress = progressOf(summary)
-    return progress.none + progress.draft + progress.validated > 0
+    const progress = progressOf(summary, works[project.id])
+    return progress.todo + progress.validated > 0
   })
   return (busy ?? projects[0])?.id ?? null
 }
@@ -63,6 +68,7 @@ function firstProject(projects: Project[], summaries: Summaries): number | null 
 function GradingSummaryPageContent() {
   const [projects, setProjects] = useState<Project[]>([])
   const [summaries, setSummaries] = useState<Summaries>({})
+  const [works, setWorks] = useState<Works>({})
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -81,11 +87,18 @@ function GradingSummaryPageContent() {
     setError(null)
     try {
       const list = await fetchMyProjects()
-      const loaded = await Promise.all(list.map(async (project) => [project.id, await loadSummary(project.id)] as const))
-      const byProject = Object.fromEntries(loaded)
+      const loaded = await Promise.all(
+        list.map(async (project) => {
+          const [summary, work] = await Promise.all([loadSummary(project.id), getProjectById(project.id).catch(() => null)])
+          return { id: project.id, summary, work: work as GradableWork | null }
+        }),
+      )
+      const summariesById = Object.fromEntries(loaded.map((item) => [item.id, item.summary]))
+      const worksById = Object.fromEntries(loaded.map((item) => [item.id, item.work]))
       setProjects(list)
-      setSummaries(byProject)
-      setSelectedId((current) => current ?? firstProject(list, byProject))
+      setSummaries(summariesById)
+      setWorks(worksById)
+      setSelectedId((current) => current ?? firstProject(list, summariesById, worksById))
     } catch (err) {
       setError(errorMessage(err, "Impossible de charger vos projets."))
     } finally {
@@ -112,16 +125,16 @@ function GradingSummaryPageContent() {
 
   const totals = useMemo(() => {
     const sum = { todo: 0, toPublish: 0, published: 0, total: 0 }
-    for (const summary of Object.values(summaries)) {
+    for (const [id, summary] of Object.entries(summaries)) {
       if (!summary) continue
-      const progress = progressOf(summary)
-      sum.todo += progress.none + progress.draft
+      const progress = progressOf(summary, works[Number(id)])
+      sum.todo += progress.todo
       sum.toPublish += progress.validated
       sum.published += progress.published
       sum.total += progress.total
     }
     return sum
-  }, [summaries])
+  }, [summaries, works])
 
   const project = projects.find((item) => item.id === selectedId)
   const summary = selectedId === null ? null : summaries[selectedId]
@@ -180,7 +193,7 @@ function GradingSummaryPageContent() {
         ) : (
           <div className="space-y-6">
             <div className="grid grid-cols-3 gap-3">
-              <StatTile label="À noter" value={totals.todo} hint="à saisir ou à terminer" emphasis={totals.todo > 0} />
+              <StatTile label="À noter" value={totals.todo} hint="travaux prêts, sans note validée" emphasis={totals.todo > 0} />
               <StatTile label="À publier" value={totals.toPublish} hint="validées, invisibles des étudiants" emphasis={totals.toPublish > 0} />
               <StatTile label="Publiées" value={`${totals.published}/${totals.total}`} hint="visibles des étudiants" />
             </div>
@@ -207,7 +220,7 @@ function GradingSummaryPageContent() {
                           </span>
                           <span className="block text-xs text-muted-foreground">{itemSummary ? describeProgress(itemSummary) : "Suivi indisponible"}</span>
                         </span>
-                        {itemSummary && <ProgressBadges summary={itemSummary} />}
+                        {itemSummary && <ProgressBadges summary={itemSummary} work={works[item.id]} />}
                       </button>
                     </li>
                   )
@@ -219,6 +232,7 @@ function GradingSummaryPageContent() {
               <ProjectDetail
                 project={project}
                 summary={summary ?? null}
+                work={works[project.id] ?? null}
                 busy={busy}
                 onPublish={publish}
                 onExport={() => exportCsv(project.id)}
@@ -239,11 +253,13 @@ function describeProgress(summary: ProjectSummary): string {
   return `${progress.published} note${progress.published > 1 ? "s" : ""} publiée${progress.published > 1 ? "s" : ""} sur ${progress.total}`
 }
 
-function ProgressBadges({ summary }: { summary: ProjectSummary }) {
+function ProgressBadges({ summary, work }: { summary: ProjectSummary; work: GradableWork | null | undefined }) {
   if (summary.gradingGrids.length === 0 || summary.groups.length === 0) return null
-  const progress = progressOf(summary)
-  const todo = progress.none + progress.draft
-  if (todo + progress.validated === 0) return <Badge variant="outline">Tout est publié</Badge>
+  const progress = progressOf(summary, work)
+  const todo = progress.todo
+  if (todo + progress.validated === 0) {
+    return <Badge variant="outline">{progress.published === progress.total ? "Tout est publié" : "Rien à noter pour l’instant"}</Badge>
+  }
   return (
     <span className="flex flex-wrap items-center gap-2">
       {todo > 0 && <Badge>{todo} à noter</Badge>}
@@ -255,17 +271,18 @@ function ProgressBadges({ summary }: { summary: ProjectSummary }) {
 interface ProjectDetailProps {
   project: Project
   summary: ProjectSummary | null
+  work: GradableWork | null
   busy: string | null
   onPublish: (summary: ProjectSummary, group?: SummaryGroup) => void
   onExport: () => void
   onRetry: () => void
 }
 
-function ProjectDetail({ project, summary, busy, onPublish, onExport, onRetry }: ProjectDetailProps) {
+function ProjectDetail({ project, summary, work, busy, onPublish, onExport, onRetry }: ProjectDetailProps) {
   if (!summary) return <ErrorState message="Le suivi des notes de ce projet n’a pas pu être chargé." onRetry={onRetry} />
 
   const { gradingGrids: grids, groups } = summary
-  const progress = progressOf(summary)
+  const progress = progressOf(summary, work)
 
   return (
     <section aria-labelledby="project-detail-title" className="space-y-4">
@@ -352,11 +369,13 @@ function ProjectDetail({ project, summary, busy, onPublish, onExport, onRetry }:
                         return (
                           <TableCell key={grid.id}>
                             <div className="flex flex-col items-start gap-1">
-                              {grade && (
+                              {grade ? (
                                 <span className="flex flex-wrap items-center gap-2">
                                   <span className="tabular-nums">{formatNumber(grade.totalScore, 2)} / 20</span>
                                   <GradeStateBadge state={state} />
                                 </span>
+                              ) : (
+                                work && !isReadyToGrade(work, grid, group.id) && <span className="text-xs text-muted-foreground">{NOT_READY_LABELS[grid.type]}</span>
                               )}
                               <Link
                                 href={gradeLink(project.id, grid, group.id)}

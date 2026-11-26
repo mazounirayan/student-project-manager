@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation"
 import { useTheme } from "next-themes"
 import { useEffect, useState } from "react"
 import { LogOut, Moon, Sun, X } from "lucide-react"
+import { APP_NAME } from "@/lib/app"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/contexts/auth-context"
@@ -54,7 +55,7 @@ export function Sidebar({ className, onNavigate, onClose }: SidebarProps) {
           onClick={onNavigate}
           className="rounded-sm text-base font-semibold leading-tight text-sidebar-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring"
         >
-          Gestionnaire de projets
+          {APP_NAME}
         </Link>
         {onClose && (
           <Button variant="ghost" size="icon" aria-label="Fermer la navigation" onClick={onClose}>

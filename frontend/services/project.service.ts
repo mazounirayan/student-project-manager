@@ -20,6 +20,8 @@ export interface Project {
   reports?: unknown[]
   defenses?: unknown[]
   gradingGrids?: unknown[]
+  /** Rapport demandé aux groupes (enseignant seulement) : ouvert, avec sa date limite et son nombre de sections. */
+  reportConfig?: { isEnabled: boolean; deadline: string | null; sectionCount: number }
   teacherName?: string
   createdAt: string
   updatedAt: string
