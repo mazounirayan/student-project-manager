@@ -7,7 +7,7 @@
     "start": "node dist/server.js",
     "dev": "nodemon src/server.ts",
     "schema:sync": "typeorm-ts-node-commonjs schema:sync -d src/database/data-source.ts",
-    "test": "npm run build && node --test \"tests/*.test.cjs\"",
+    "test": "npm run build && node --test tests/",
     "provision:teacher": "ts-node src/provision-teacher.ts"
   },
   "license": "Apache-2.0",
