@@ -14,19 +14,32 @@ export interface Promotion {
   year: number
   createdAt: string
   students?: PromotionStudent[]
-  projects?: unknown[]
+  projects?: { id: number; name?: string }[]
 }
 
 export interface StudentForm {
-  nom: string
-  prenom: string
+  firstName: string
+  lastName: string
   email: string
 }
 
-export interface CreatePromotionData {
+export interface PromotionForm {
   name: string
   description: string
   year: number
+}
+
+/** Bilan d’un ajout d’étudiants : `errors` liste les lignes ignorées et les e-mails non partis. */
+export interface EnrollmentSummary {
+  totalProcessed: number
+  newStudents: number
+  existingStudents: number
+  errors: string[]
+}
+
+export interface EnrollmentResult {
+  promotion: Promotion
+  summary: EnrollmentSummary
 }
 
 export const promotionService = {
@@ -34,11 +47,11 @@ export const promotionService = {
     return apiGet<Promotion[]>("/promotions/my")
   },
 
-  create(data: CreatePromotionData): Promise<Promotion> {
+  create(data: PromotionForm): Promise<Promotion> {
     return apiPost<Promotion>("/promotions", data)
   },
 
-  update(id: number | string, data: Partial<CreatePromotionData>): Promise<Promotion> {
+  update(id: number, data: Partial<PromotionForm>): Promise<Promotion> {
     return apiPut<Promotion>(`/promotions/${id}`, data)
   },
 
@@ -46,23 +59,11 @@ export const promotionService = {
     return apiDelete<void>(`/promotions/${id}`)
   },
 
-  addStudents(promotionId: number, students: StudentForm[]): Promise<Promotion> {
-    const studentPayload = students.map((student) => ({
-      email: student.email,
-      firstName: student.prenom,
-      lastName: student.nom,
-    }))
-    return apiPost<Promotion>(`/promotions/${promotionId}/students`, studentPayload)
+  addStudents(promotionId: number, students: StudentForm[]): Promise<EnrollmentResult> {
+    return apiPost<EnrollmentResult>(`/promotions/${promotionId}/students`, students)
   },
 
   deleteStudent(promotionId: number, studentId: number): Promise<void> {
     return apiDelete<void>(`/promotions/${promotionId}/students/${studentId}`)
-  },
-
-  importFile(promotionId: number, file: File): Promise<unknown> {
-    const formdata = new FormData()
-    formdata.append("file", file)
-    // Pour FormData, le navigateur définit lui-même le Content-Type (frontière).
-    return apiPost<unknown>(`/promotions/${promotionId}/students/import`, formdata)
   },
 }

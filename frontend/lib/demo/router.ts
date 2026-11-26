@@ -5,7 +5,8 @@
 import { DEMO_ACCOUNTS } from "./mode"
 import { loadDemoDb, nextId, persist } from "./store"
 import { serializeSession, serializeGrid, serializeProjectDetail, serializeProjectSummary, serializeUser } from "./serialize"
-import type { DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoReport, DemoSession, DemoUser } from "./types"
+import { parseCsv, parseJson } from "../student-import"
+import type { DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoPromotion, DemoReport, DemoSession, DemoUser } from "./types"
 
 export class DemoApiError {
   status: number
@@ -58,6 +59,7 @@ async function readBody(init: RequestInit | undefined): Promise<Record<string, a
 function requireUser(db: DemoDb, init: RequestInit | undefined, headers: Headers): DemoUser {
   const user = userFromToken(db, readToken(init, headers))
   if (!user) throw new DemoApiError(401, "Session expirée, reconnectez-vous.")
+  if (!user.isActive) throw new DemoApiError(401, "Compte introuvable ou désactivé")
   return user
 }
 
@@ -345,70 +347,73 @@ function myGrades(db: DemoDb, user: DemoUser) {
   return rows
 }
 
-async function importCsvStudents(db: DemoDb, promotionId: number, file: File) {
-  const promotion = db.promotions.find((p) => p.id === promotionId)
-  if (!promotion) throw new DemoApiError(404, "Promotion introuvable.")
-  if (!file.name.toLowerCase().endsWith(".csv")) {
-    throw new DemoApiError(400, "En démo, seul l’import d’un fichier CSV est pris en charge.")
-  }
+const isValidYear = (year: unknown) => Number.isInteger(Number(year)) && Number(year) >= 2000 && Number(year) <= 2100
 
-  const text = await file.text()
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-  const errors: string[] = []
-  let created = 0
-  let attached = 0
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const MAX_STUDENTS_PER_REQUEST = 500
 
-  for (const line of lines) {
-    const parts = line.split(/[;,]/).map((p) => p.trim())
-    let email = ""
-    let firstName = ""
-    let lastName = ""
-    if (parts.some((p) => p.toLowerCase().startsWith("email")) || parts.length === 1) {
-      email = parts.find((p) => p.includes("@")) ?? ""
-      if (!email) continue
-    } else {
-      const atIndex = parts.findIndex((p) => p.includes("@"))
-      if (atIndex === -1) {
-        errors.push(`Ligne ignorée (email absent) : ${line}`)
-        continue
-      }
-      email = parts[atIndex]
-      lastName = parts[(atIndex + 1) % parts.length] ?? ""
-      firstName = parts[(atIndex + 2) % parts.length] ?? ""
+interface StudentEntry {
+  email?: string
+  firstName?: string
+  lastName?: string
+}
+
+/** Même bilan que l’API : comptes créés, comptes existants rattachés, lignes ignorées avec leur raison. */
+function enrollStudents(db: DemoDb, promotion: DemoPromotion, entries: StudentEntry[]) {
+  if (entries.length > MAX_STUDENTS_PER_REQUEST) throw new DemoApiError(400, `${MAX_STUDENTS_PER_REQUEST} étudiants maximum par requête`)
+  const summary = { totalProcessed: 0, newStudents: 0, existingStudents: 0, errors: [] as string[] }
+  const seen = new Set<string>()
+
+  entries.forEach((entry, index) => {
+    summary.totalProcessed++
+    const email = entry.email?.trim().toLowerCase()
+    if (!email || !EMAIL_PATTERN.test(email)) {
+      summary.errors.push(`Ligne ${index + 1} : adresse email manquante ou invalide`)
+      return
     }
+    if (seen.has(email)) {
+      summary.errors.push(`Ligne ${index + 1} : adresse en double (${email})`)
+      return
+    }
+    seen.add(email)
 
-    const existing = db.users.find((u) => u.email.toLowerCase() === email.toLowerCase())
-    const student = existing ?? (() => {
-      created++
-      const user = {
+    let student = db.users.find((u) => u.email.toLowerCase() === email)
+    if (student && student.role !== "student") {
+      summary.errors.push(`Ligne ${index + 1} : ${email} est un compte enseignant`)
+      return
+    }
+    if (student) {
+      summary.existingStudents++
+    } else {
+      const guess = email.split("@")[0].split(".")[0]
+      student = {
         id: nextId(db),
         email,
-        firstName: firstName || email.split("@")[0],
-        lastName: lastName || "",
-        role: "student" as const,
+        firstName: entry.firstName?.trim() || guess.charAt(0).toUpperCase() + guess.slice(1).toLowerCase(),
+        lastName: entry.lastName?.trim() || "",
+        role: "student",
         isActive: true,
         createdAt: new Date().toISOString(),
       }
-      db.users.push(user)
-      return user
-    })()
-
-    if (!promotion.studentIds.includes(student.id)) {
-      promotion.studentIds.push(student.id)
-      attached++
+      db.users.push(student)
+      summary.newStudents++
     }
-  }
+    if (!promotion.studentIds.includes(student.id)) promotion.studentIds.push(student.id)
+  })
   persist()
 
-  return {
-    promotion,
-    summary: {
-      totalProcessed: lines.length,
-      newStudents: created,
-      existingStudents: attached - created > 0 ? attached - created : 0,
-      errors,
-    },
+  return { promotion: { ...promotion, students: promotion.studentIds.map((id) => serializeUser(db, id)) }, summary }
+}
+
+async function importStudentFile(db: DemoDb, promotion: DemoPromotion, file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase()
+  if (extension !== "csv" && extension !== "json") {
+    throw new DemoApiError(400, "En démo, seuls les fichiers CSV et JSON sont pris en charge.")
   }
+  const parsed = extension === "csv" ? parseCsv(await file.text()) : parseJson(await file.text())
+  if (parsed.error) throw new DemoApiError(400, "Fichier illisible ou mal formé")
+  if (parsed.rows.length === 0) throw new DemoApiError(400, "Aucun étudiant trouvé dans le fichier")
+  return enrollStudents(db, promotion, parsed.rows)
 }
 
 /**
@@ -440,6 +445,7 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       if (!account) return fail(401, "Compte de démo inconnu. Utilisez les boutons de connexion démo.")
       const user = db.users.find((u) => u.email === account.email)
       if (!user) return fail(401, "Compte de démo introuvable dans la base locale.")
+      if (!user.isActive) return fail(401, "Identifiants invalides")
       return json({ user: serializeUser(db, user), token: `demo-token-${user.id}`, refreshToken: "demo-refresh-token" })
     }
     if (route === "/auth/verify" && method === "GET") {
@@ -451,20 +457,19 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
     }
 
     // ---------- UTILISATEURS (enseignant) ----------
-    if (route === "/users/students" && method === "GET") {
+    if ((route === "/users/students" || route === "/users/teachers") && method === "GET") {
       requireTeacher(db, init, headers)
-      return json(db.users.filter((u) => u.role === "student").map((u) => serializeUser(db, u)))
+      const role = route === "/users/students" ? "student" : "teacher"
+      const byName = (a: DemoUser, b: DemoUser) => a.lastName.localeCompare(b.lastName, "fr") || a.firstName.localeCompare(b.firstName, "fr")
+      return json(db.users.filter((u) => u.role === role).sort(byName).map((u) => serializeUser(db, u)))
     }
-    if (route === "/users/teachers" && method === "GET") {
-      requireTeacher(db, init, headers)
-      return json(db.users.filter((u) => u.role === "teacher").map((u) => serializeUser(db, u)))
-    }
-    let m = /^\/users\/(\d+)\/deactivate$/.exec(route)
+    let m = /^\/users\/(\d+)\/(deactivate|activate)$/.exec(route)
     if (m && method === "PUT") {
       requireTeacher(db, init, headers)
       const user = db.users.find((u) => u.id === Number(m![1]))
-      if (!user) return fail(404, "Utilisateur introuvable.")
-      user.isActive = false
+      if (!user) return fail(404, "Utilisateur introuvable")
+      if (user.role !== "student") return fail(403, "Seuls les comptes étudiants peuvent être désactivés ou réactivés")
+      user.isActive = m![2] === "activate"
       persist()
       return json(serializeUser(db, user))
     }
@@ -485,11 +490,13 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
     }
     if (route === "/promotions" && method === "POST") {
       const teacher = requireTeacher(db, init, headers)
+      if (!String(body.name ?? "").trim()) return fail(400, "Nom de la promotion requis")
+      if (!isValidYear(body.year)) return fail(400, "Année invalide")
       const promotion = {
         id: nextId(db),
-        name: String(body.name ?? "Nouvelle promotion"),
+        name: String(body.name).trim(),
         description: String(body.description ?? ""),
-        year: Number(body.year) || new Date().getFullYear(),
+        year: Number(body.year),
         teacherId: teacher.id,
         studentIds: [],
         createdAt: new Date().toISOString(),
@@ -504,9 +511,11 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       assertOwnsPromotion(db, owner, Number(m![1]))
       const promotion = db.promotions.find((p) => p.id === Number(m![1]))
       if (!promotion) return fail(404, "Promotion introuvable.")
-      if (body.name) promotion.name = String(body.name)
+      if (body.name !== undefined && !String(body.name).trim()) return fail(400, "Nom de promotion invalide")
+      if (body.year !== undefined && !isValidYear(body.year)) return fail(400, "Année invalide")
+      if (body.name !== undefined) promotion.name = String(body.name).trim()
       if (body.description !== undefined) promotion.description = String(body.description)
-      if (body.year) promotion.year = Number(body.year)
+      if (body.year !== undefined) promotion.year = Number(body.year)
       persist()
       return json({ ...promotion, students: promotion.studentIds.map((id) => serializeUser(db, id)) })
     }
@@ -528,27 +537,8 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       assertOwnsPromotion(db, owner, Number(m![1]))
       const promotion = db.promotions.find((p) => p.id === Number(m![1]))
       if (!promotion) return fail(404, "Promotion introuvable.")
-      const list = Array.isArray(body) ? body : [body]
-      for (const entry of list) {
-        const email = String(entry.email ?? "").toLowerCase()
-        if (!email.includes("@")) continue
-        let student = db.users.find((u) => u.email.toLowerCase() === email)
-        if (!student) {
-          student = {
-            id: nextId(db),
-            email,
-            firstName: String(entry.firstName ?? email.split("@")[0]),
-            lastName: String(entry.lastName ?? ""),
-            role: "student",
-            isActive: true,
-            createdAt: new Date().toISOString(),
-          }
-          db.users.push(student)
-        }
-        if (!promotion.studentIds.includes(student.id)) promotion.studentIds.push(student.id)
-      }
-      persist()
-      return json({ ...promotion, students: promotion.studentIds.map((id) => serializeUser(db, id)) }, 201)
+      if (!Array.isArray(body)) return fail(400, "Un tableau d'étudiants est attendu")
+      return json(enrollStudents(db, promotion, body as StudentEntry[]), 201)
     }
     m = /^\/promotions\/(\d+)\/students\/(\d+)$/.exec(route)
     if (m && method === "DELETE") {
@@ -566,8 +556,9 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       assertOwnsPromotion(db, owner, Number(m![1]))
       const file = formDataFile(form)
       if (!file) return fail(400, "Aucun fichier reçu.")
-      const result = await importCsvStudents(db, Number(m![1]), file)
-      return json(result)
+      const promotion = db.promotions.find((p) => p.id === Number(m![1]))
+      if (!promotion) return fail(404, "Promotion introuvable.")
+      return json(await importStudentFile(db, promotion, file))
     }
 
     if (route === "/projects/my" && method === "GET") {

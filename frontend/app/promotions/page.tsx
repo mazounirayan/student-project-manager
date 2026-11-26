@@ -1,26 +1,27 @@
 "use client"
 
-import { usePromotions } from "@/hooks/usePromotions"
-import { MainLayout } from "@/components/layout/main-layout"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Users, Calendar, MoreHorizontal } from "lucide-react"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Button } from "@/components/ui/button"
-import { CreatePromotionDialog } from "@/components/promotions/create-promotion-dialog"
-import { StudentsListDialog } from "@/components/promotions/students-list-dialog"
-import { EditPromotionDialog } from "@/components/promotions/edit-promition-dialog"
-import { AddStudentsDialog } from "@/components/promotions/add-students-dialog"
-import { ManageStudentsDialog } from "@/components/promotions/manage-students-dialog"
-import { toast } from "sonner"
-import { promotionService } from "@/services/PromotionService"
-import { ProtectedRoute } from "@/components/auth/protected-route"
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog"
-import { ErrorState } from "@/components/shared/ErrorState"
-import { EmptyState } from "@/components/shared/EmptyState"
-import { CardsSkeleton } from "@/components/shared/Skeletons"
 import { useState } from "react"
-import type { Promotion } from "@/services/PromotionService"
+import { GraduationCap, Plus } from "lucide-react"
+import { toast } from "sonner"
+import { ProtectedRoute } from "@/components/auth/protected-route"
+import { MainLayout } from "@/components/layout/main-layout"
+import { PageContainer, PageHeader } from "@/components/layout/page"
+import { AddStudentsDialog } from "@/components/promotions/add-students-dialog"
+import { PromotionCard } from "@/components/promotions/promotion-card"
+import { PromotionDialog } from "@/components/promotions/promotion-dialog"
+import { StudentsDialog } from "@/components/promotions/students-dialog"
+import { EmptyState } from "@/components/shared/EmptyState"
+import { ErrorState } from "@/components/shared/ErrorState"
+import { CardsSkeleton } from "@/components/shared/Skeletons"
+import { Button } from "@/components/ui/button"
+import { errorMessage } from "@/lib/api"
+import { confirmAction } from "@/lib/dialogs"
+import { plural } from "@/lib/format"
+import { fullName } from "@/lib/people"
+import { sortPromotions, usePromotions } from "@/hooks/usePromotions"
+import { promotionService, type Promotion, type PromotionForm, type PromotionStudent } from "@/services/PromotionService"
+
+type Dialog = { kind: "create" } | { kind: "edit" | "students" | "add"; id: number }
 
 export default function PromotionsPage() {
   return (
@@ -32,204 +33,149 @@ export default function PromotionsPage() {
 
 function PromotionsPageContent() {
   const { promotions, loading, error, fetchPromotions, setPromotions } = usePromotions()
-  const [pendingDelete, setPendingDelete] = useState<Promotion | null>(null)
+  const [dialog, setDialog] = useState<Dialog | null>(null)
 
-  const handleCreatePromotion = async (data: { name: string; description: string; year: number }) => {
+  const target = dialog && dialog.kind !== "create" ? promotions.find((p) => p.id === dialog.id) : undefined
+  const close = () => setDialog(null)
+
+  /** Remplace une promotion par sa version à jour en gardant ce que l’API ne renvoie pas (projets). */
+  const merge = (updated: Promotion) => setPromotions((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)))
+
+  const createPromotion = async (data: PromotionForm) => {
+    const created = await promotionService.create(data)
+    setPromotions((prev) => sortPromotions([...prev, { students: [], projects: [], ...created }]))
+    toast.success(`Promotion « ${created.name} » créée.`)
+    // L’étape suivante évidente : y mettre des étudiants.
+    setDialog({ kind: "add", id: created.id })
+  }
+
+  const editPromotion = async (id: number, data: PromotionForm) => {
+    merge(await promotionService.update(id, data))
+    setPromotions((prev) => sortPromotions(prev))
+    toast.success("Promotion mise à jour.")
+    close()
+  }
+
+  const deletePromotion = async (promotion: Promotion) => {
+    const projects = promotion.projects?.length ?? 0
+    if (projects > 0) {
+      toast.error(`« ${promotion.name} » contient ${plural(projects, "projet")}.`, {
+        description: "Supprimez d’abord ces projets depuis la page Projets : une promotion qui en contient ne peut pas être supprimée.",
+      })
+      return
+    }
+    const students = promotion.students?.length ?? 0
+    const confirmed = await confirmAction({
+      title: `Supprimer la promotion « ${promotion.name} » ?`,
+      description:
+        students > 0
+          ? `La promotion sera supprimée définitivement. Ses ${plural(students, "étudiant")} gardent leur compte (retrouvez-les dans Utilisateurs) mais ne seront plus rattachés à aucune promotion.`
+          : "La promotion sera supprimée définitivement.",
+      confirmText: "Supprimer la promotion",
+      destructive: true,
+    })
+    if (!confirmed) return
     try {
-      const newPromotion = await promotionService.create(data)
-      setPromotions((prev) => [...prev, newPromotion])
-      toast.success("Promotion créée.")
+      await promotionService.delete(promotion.id)
+      setPromotions((prev) => prev.filter((p) => p.id !== promotion.id))
+      toast.success(`Promotion « ${promotion.name} » supprimée.`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur lors de la création de la promotion.")
+      toast.error("La promotion n’a pas été supprimée.", { description: errorMessage(err, "Réessayez dans un instant.") })
     }
   }
 
-  const handleEditPromotion = async (id: number, data: { name: string; description: string; year: number }) => {
-    try {
-      const updated = await promotionService.update(id, data)
-      setPromotions((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)))
-      toast.success("Promotion mise à jour.")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Impossible de modifier la promotion.")
-    }
-  }
+  const removeStudents = async (promotion: Promotion, students: PromotionStudent[]): Promise<boolean> => {
+    const who = students.length === 1 ? fullName(students[0]) || students[0].email : plural(students.length, "étudiant")
+    const projects = promotion.projects?.length ?? 0
+    const confirmed = await confirmAction({
+      title: `Retirer ${who} de la promotion ?`,
+      description:
+        `${students.length === 1 ? "Cet étudiant ne verra" : "Ces étudiants ne verront"} plus les projets de « ${promotion.name} »` +
+        `${projects > 0 ? ` (${plural(projects, "projet")})` : ""}. ` +
+        `${students.length === 1 ? "Son compte est conservé" : "Leurs comptes sont conservés"} et vous pourrez les ajouter de nouveau à tout moment.`,
+      confirmText: "Retirer",
+      destructive: true,
+    })
+    if (!confirmed) return false
 
-  const confirmDeletePromotion = async () => {
-    if (!pendingDelete) return
-    try {
-      await promotionService.delete(pendingDelete.id)
-      setPromotions((prev) => prev.filter((p) => p.id !== pendingDelete.id))
-      toast.success("Promotion supprimée.")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur lors de la suppression de la promotion.")
-    } finally {
-      setPendingDelete(null)
-    }
-  }
+    const results = await Promise.allSettled(students.map((student) => promotionService.deleteStudent(promotion.id, student.id)))
+    const removedIds = new Set(students.filter((_, index) => results[index].status === "fulfilled").map((student) => student.id))
+    setPromotions((prev) => prev.map((p) => (p.id === promotion.id ? { ...p, students: (p.students ?? []).filter((s) => !removedIds.has(s.id)) } : p)))
 
-  const handleAddStudents = async (promotionId: number, students: { nom: string; prenom: string; email: string }[]) => {
-    try {
-      await promotionService.addStudents(promotionId, students)
-      toast.success("Étudiants ajoutés.")
-      await fetchPromotions()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur lors de l’ajout des étudiants.")
-    }
-  }
-
-  const handleAddStudentsFile = async (promotionId: number, file: File) => {
-    try {
-      await promotionService.importFile(promotionId, file)
-      toast.success("Fichier importé.")
-      await fetchPromotions()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur lors de l’import du fichier.")
-    }
-  }
-
-  const confirmDeleteStudent = async (promotionId: number, studentId: number) => {
-    if (!window.confirm("Supprimer cet étudiant de la promotion ?")) return
-    try {
-      await promotionService.deleteStudent(promotionId, studentId)
-      toast.success("Étudiant retiré de la promotion.")
-      setPromotions((prev) =>
-        prev.map((p) =>
-          p.id === promotionId
-            ? { ...p, students: (p.students ?? []).filter((s) => s.id !== studentId) }
-            : p
-        )
-      )
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur lors de la suppression de l’étudiant.")
-    }
+    const failed = students.length - removedIds.size
+    if (failed === 0) toast.success(removedIds.size === 1 ? `${who} retiré de la promotion.` : `${plural(removedIds.size, "étudiant retiré", "étudiants retirés")} de la promotion.`)
+    else toast.error(`${plural(failed, "étudiant n’a pas pu être retiré", "étudiants n’ont pas pu être retirés")}.`, { description: "Réessayez dans un instant." })
+    return failed === 0
   }
 
   return (
     <MainLayout>
-      <div className="p-6">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-bold">Promotions</h1>
-            <p className="text-muted-foreground">Vos promotions et leurs étudiants.</p>
-          </div>
-          <CreatePromotionDialog onCreatePromotion={handleCreatePromotion} />
-        </div>
+      <PageContainer>
+        <PageHeader
+          title="Promotions"
+          description="Vos promotions et leurs étudiants. Préparez les listes ici avant de lancer un projet."
+          actions={
+            promotions.length > 0 && (
+              <Button onClick={() => setDialog({ kind: "create" })}>
+                <Plus aria-hidden="true" className="h-4 w-4" />
+                Nouvelle promotion
+              </Button>
+            )
+          }
+        />
 
         {loading ? (
-          <CardsSkeleton count={3} />
+          <CardsSkeleton count={2} />
         ) : error ? (
           <ErrorState message={error} onRetry={fetchPromotions} />
         ) : promotions.length === 0 ? (
           <EmptyState
-            icon={Users}
+            icon={GraduationCap}
             title="Aucune promotion pour l’instant"
-            description="Créez une première promotion pour y ajouter vos étudiants et lancer des projets."
+            description="Créez une promotion, puis importez la liste de vos étudiants depuis un fichier CSV ou JSON : un aperçu vous montre le résultat avant l’ajout."
+            action={
+              <Button onClick={() => setDialog({ kind: "create" })}>
+                <Plus aria-hidden="true" className="h-4 w-4" />
+                Créer une promotion
+              </Button>
+            }
           />
         ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {promotions.map((promotion) => {
-              // Adapter les étudiants de l’API vers la forme attendue par les dialogues.
-              const dialogStudents = (promotion.students ?? []).map((s) => ({
-                id: s.id,
-                name: `${s.firstName} ${s.lastName}`.trim(),
-                email: s.email,
-                firstName: s.firstName,
-                lastName: s.lastName,
-                promotionId: String(promotion.id),
-                groupId: undefined,
-                createdAt: new Date(),
-              })) as unknown as import("@/types/project").Student[]
-              return (
-              <Card key={promotion.id} className="transition-shadow hover:shadow-md">
-                <CardHeader className="flex flex-wrap justify-between items-center">
-                  <div>
-                    <CardTitle className="text-lg">{promotion.name}</CardTitle>
-                    <CardDescription className="flex items-center">
-                      <Calendar aria-hidden="true" className="mr-1 h-3 w-3" />
-                      {promotion.year}
-                    </CardDescription>
-                  </div>
-
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" aria-label="Actions sur la promotion">
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <EditPromotionDialog
-                        promotion={{
-                          id: String(promotion.id),
-                          name: promotion.name,
-                          description: promotion.description ?? "",
-                          year: String(promotion.year),
-                        }}
-                        onEditPromotion={(data) => handleEditPromotion(promotion.id, data)}
-                        trigger={<DropdownMenuItem onSelect={(e) => e.preventDefault()}>Modifier</DropdownMenuItem>}
-                      />
-                      <AddStudentsDialog
-                        promotionId={promotion.id}
-                        promotionName={promotion.name}
-                        onAddStudents={handleAddStudents}
-                        onAddStudentsFile={handleAddStudentsFile}
-                        trigger={<DropdownMenuItem onSelect={(e) => e.preventDefault()}>Ajouter des étudiants</DropdownMenuItem>}
-                      />
-                      <DropdownMenuItem
-                        className="text-destructive"
-                        onClick={() => setPendingDelete(promotion)}
-                      >
-                        Supprimer
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </CardHeader>
-
-                <CardContent>
-                  <div className="flex flex-wrap items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Users aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm text-muted-foreground">
-                        {promotion.students?.length ?? 0} étudiant(s)
-                      </span>
-                    </div>
-                    <Badge variant="secondary">Active</Badge>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <StudentsListDialog
-                      promotionName={promotion.name}
-                      students={dialogStudents}
-                      trigger={
-                        <Button variant="outline" size="sm" className="flex-1">
-                          Voir
-                        </Button>
-                      }
-                    />
-                    <ManageStudentsDialog
-                      promotionId={promotion.id}
-                      promotionName={promotion.name}
-                      students={dialogStudents as unknown as { id: number; firstName: string; lastName: string; email: string }[]}
-                      onDeleteStudent={confirmDeleteStudent}
-                      trigger={<Button size="sm" className="flex-1">Gérer</Button>}
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-              )
-            })}
+          <div className="grid gap-4 md:grid-cols-2 lg:gap-6">
+            {promotions.map((promotion) => (
+              <PromotionCard
+                key={promotion.id}
+                promotion={promotion}
+                onShowStudents={() => setDialog({ kind: "students", id: promotion.id })}
+                onAddStudents={() => setDialog({ kind: "add", id: promotion.id })}
+                onEdit={() => setDialog({ kind: "edit", id: promotion.id })}
+                onDelete={() => deletePromotion(promotion)}
+              />
+            ))}
           </div>
         )}
-      </div>
+      </PageContainer>
 
-      <ConfirmDialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => { if (!open) setPendingDelete(null) }}
-        onConfirm={confirmDeletePromotion}
-        title="Supprimer cette promotion ?"
-        description={`« ${pendingDelete?.name ?? "" } » sera définitivement supprimée. Une promotion qui contient des projets ne peut pas être supprimée.`}
-        confirmText="Supprimer"
-        variant="destructive"
-      />
+      <PromotionDialog open={dialog?.kind === "create"} onOpenChange={(open) => !open && close()} onSubmit={createPromotion} />
+      {target && (
+        <>
+          <PromotionDialog
+            key={`edit-${target.id}`}
+            open={dialog?.kind === "edit"}
+            onOpenChange={(open) => !open && close()}
+            promotion={target}
+            onSubmit={(data) => editPromotion(target.id, data)}
+          />
+          <StudentsDialog
+            open={dialog?.kind === "students"}
+            onOpenChange={(open) => !open && close()}
+            promotion={target}
+            onAdd={() => setDialog({ kind: "add", id: target.id })}
+            onRemove={(students) => removeStudents(target, students)}
+          />
+          <AddStudentsDialog open={dialog?.kind === "add"} onOpenChange={(open) => !open && close()} promotion={target} onAdded={merge} />
+        </>
+      )}
     </MainLayout>
   )
 }

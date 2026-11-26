@@ -8,8 +8,6 @@ export interface AppUser {
   role: "teacher" | "student"
   isActive: boolean
   createdAt: string
-  studentPromotions?: { id: number; name: string }[]
-  teacherPromotions?: { id: number; name: string }[]
 }
 
 export const userService = {
@@ -23,5 +21,9 @@ export const userService = {
 
   deactivate(id: number): Promise<AppUser> {
     return apiPut<AppUser>(`/users/${id}/deactivate`)
+  },
+
+  reactivate(id: number): Promise<AppUser> {
+    return apiPut<AppUser>(`/users/${id}/activate`)
   },
 }

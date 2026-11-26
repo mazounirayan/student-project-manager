@@ -6,7 +6,7 @@ import { AppDataSource } from '../database/data-source';
 import { Promotion, User } from '../entities/Entities';
 import { PasswordService } from '../utils/password.service';
 import { EmailService } from '../utils/email.service';
-import { HttpError, badRequest } from '../utils/http-error';
+import { HttpError, badRequest, conflict } from '../utils/http-error';
 import { findOwnedPromotion } from './access.service';
 
 export interface StudentInput {
@@ -112,8 +112,11 @@ export class PromotionService {
     return promotions().save(promotion);
   }
 
+  /** Les comptes étudiants sont conservés ; une promotion qui a des projets ne se supprime pas. */
   async deletePromotion(id: number, teacherId: number): Promise<void> {
-    await promotions().remove(await findOwnedPromotion(id, teacherId));
+    const promotion = await findOwnedPromotion(id, teacherId, ['projects']);
+    if (promotion.projects?.length) throw conflict('Cette promotion contient des projets : supprimez-les d’abord.');
+    await promotions().remove(promotion);
   }
 
   async removeStudent(promotionId: number, teacherId: number, studentId: number): Promise<Promotion> {

@@ -27,7 +27,7 @@ export class PromotionController {
     res.status(204).send();
   };
 
-  /** Corps attendu : un tableau d'étudiants `{ email, firstName?, lastName? }`. */
+  /** Corps attendu : un tableau d'étudiants `{ email, firstName?, lastName? }`. Réponse : `{ promotion, summary }`. */
   addStudents = async (req: Request, res: Response) => {
     if (!Array.isArray(req.body)) throw badRequest('Un tableau d\'étudiants est attendu');
     const students: StudentInput[] = req.body.map(({ email, firstName, lastName }) => ({
@@ -35,8 +35,7 @@ export class PromotionController {
       firstName: typeof firstName === 'string' ? firstName : undefined,
       lastName: typeof lastName === 'string' ? lastName : undefined,
     }));
-    const { promotion } = await this.promotionService.addStudents(parseId(req.params.id), currentUser(req).id, students);
-    res.status(201).json(promotion);
+    res.status(201).json(await this.promotionService.addStudents(parseId(req.params.id), currentUser(req).id, students));
   };
 
   removeStudent = async (req: Request, res: Response) => {

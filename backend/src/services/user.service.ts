@@ -19,15 +19,25 @@ export class UserService {
   }
 
   /** Un enseignant peut désactiver un compte étudiant, jamais un autre enseignant. */
-  async deactivateStudent(id: number): Promise<User> {
+  deactivateStudent(id: number): Promise<User> {
+    return this.setStudentActive(id, false);
+  }
+
+  /** Réactive un compte étudiant désactivé par erreur. */
+  reactivateStudent(id: number): Promise<User> {
+    return this.setStudentActive(id, true);
+  }
+
+  private async setStudentActive(id: number, isActive: boolean): Promise<User> {
     const user = await this.getById(id);
-    if (user.role !== 'student') throw forbidden('Seuls les comptes étudiants peuvent être désactivés');
-    user.isActive = false;
+    if (user.role !== 'student') throw forbidden('Seuls les comptes étudiants peuvent être désactivés ou réactivés');
+    user.isActive = isActive;
     return users().save(user);
   }
 
-  listActiveByRole(role: Role): Promise<User[]> {
-    return users().find({ where: { role, isActive: true }, order: { lastName: 'ASC', firstName: 'ASC' } });
+  /** Tous les comptes du rôle, désactivés compris (la page Utilisateurs les distingue par `isActive`). */
+  listByRole(role: Role): Promise<User[]> {
+    return users().find({ where: { role }, order: { lastName: 'ASC', firstName: 'ASC' } });
   }
 
   async search(query: string, role?: Role): Promise<User[]> {

@@ -1,5 +1,10 @@
 import { promotionService, type Promotion } from "@/services/PromotionService"
+import { errorMessage } from "@/lib/api"
+import { compareText } from "@/lib/people"
 import { useState, useEffect, useCallback } from "react"
+
+/** Années récentes d’abord, puis ordre alphabétique : le même classement que l’API. */
+export const sortPromotions = (list: Promotion[]) => [...list].sort((a, b) => b.year - a.year || compareText(a.name, b.name))
 
 export function usePromotions() {
   const [promotions, setPromotions] = useState<Promotion[]>([])
@@ -11,9 +16,9 @@ export function usePromotions() {
     setError(null)
     try {
       const data = await promotionService.getAll()
-      setPromotions(Array.isArray(data) ? data : [])
+      setPromotions(Array.isArray(data) ? sortPromotions(data) : [])
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible de charger les promotions.")
+      setError(errorMessage(err, "Impossible de charger les promotions."))
       setPromotions([])
     } finally {
       setLoading(false)

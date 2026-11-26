@@ -15,5 +15,6 @@ router.get('/search', requireTeacher, controller.search);
 router.get('/students', requireTeacher, controller.listStudents);
 router.get('/teachers', requireTeacher, controller.listTeachers);
 router.put('/:id/deactivate', requireTeacher, controller.deactivate);
+router.put('/:id/activate', requireTeacher, controller.activate);
 
 export default router;

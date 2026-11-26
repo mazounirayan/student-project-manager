@@ -21,14 +21,18 @@ export class UserController {
   };
 
   listStudents = async (_req: Request, res: Response) => {
-    res.json(await this.userService.listActiveByRole('student'));
+    res.json(await this.userService.listByRole('student'));
   };
 
   listTeachers = async (_req: Request, res: Response) => {
-    res.json(await this.userService.listActiveByRole('teacher'));
+    res.json(await this.userService.listByRole('teacher'));
   };
 
   deactivate = async (req: Request, res: Response) => {
     res.json(await this.userService.deactivateStudent(parseId(req.params.id)));
+  };
+
+  activate = async (req: Request, res: Response) => {
+    res.json(await this.userService.reactivateStudent(parseId(req.params.id)));
   };
 }
