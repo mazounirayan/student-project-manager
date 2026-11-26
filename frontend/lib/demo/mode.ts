@@ -8,7 +8,7 @@ export const STATIC_DEMO = process.env.NEXT_PUBLIC_STATIC_DEMO === "1"
 export const DEMO_PRERENDERED_PROJECT_IDS = [1, 2]
 
 /** Clé localStorage de la base de démo. */
-export const DEMO_DB_KEY = "spm-demo-db-v2"
+export const DEMO_DB_KEY = "spm-demo-db-v3"
 
 /** Comptes de démonstration (données fictives, domaine example réservé). */
 export const DEMO_ACCOUNTS = {
