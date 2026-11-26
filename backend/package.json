@@ -1,0 +1,55 @@
+{
+  "name": "student-project-manager-backend",
+  "version": "1.0.0",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "nodemon src/server.ts",
+    "schema:sync": "typeorm-ts-node-commonjs schema:sync -d src/database/data-source.ts",
+    "test": "npm run build && node --test \"tests/*.test.cjs\"",
+    "provision:teacher": "ts-node src/provision-teacher.ts"
+  },
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "description": "API REST du gestionnaire de projets étudiants (Express, TypeORM, MySQL).",
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "bcrypt": "^6.0.0",
+    "compression": "^1.8.1",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.2.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.0.1",
+    "express-validator": "^7.2.1",
+    "google-auth-library": "^10.3.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "mysql2": "^3.14.2",
+    "nodemailer": "^7.0.6",
+    "pdfkit": "^0.17.2",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.26",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/bcrypt": "^6.0.0",
+    "@types/compression": "^1.8.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.3.1",
+    "@types/nodemailer": "^7.0.1",
+    "@types/pdfkit": "^0.17.2",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  },
+  "allowScripts": {
+    "bcrypt@6.0.0": true
+  }
+}

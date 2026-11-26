@@ -1,0 +1,12 @@
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+# Tous les fichiers d'environnement restent locaux : ne jamais les publier.
+.env
+.env.*
+uploads/
+*.log
+.DS_Store
