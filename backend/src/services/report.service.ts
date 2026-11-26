@@ -23,7 +23,7 @@ export interface ReportConfigInput {
   sections?: SectionConfigInput[];
 }
 
-const REPORT_RELATIONS = ['project', 'group', 'sections', 'sections.sectionConfig'];
+const REPORT_RELATIONS = ['project', 'group', 'sections', 'sections.sectionConfig', 'sections.updatedBy'];
 
 const configs = () => AppDataSource.getRepository(ReportConfig);
 const sectionConfigs = () => AppDataSource.getRepository(ReportSectionConfig);
@@ -115,18 +115,34 @@ export class ReportService {
     return serializeReport(report);
   }
 
-  async saveSectionContent(sectionConfigId: number, groupId: number, studentId: number, content: string) {
+  /**
+   * Enregistre le texte d'une section. `baseUpdatedAt` est la date de la version que l'étudiant a sous les yeux :
+   * si un autre membre du groupe a enregistré depuis, on refuse (409) plutôt que d'écraser son texte.
+   * Passer `undefined` désactive cette vérification.
+   */
+  async saveSectionContent(sectionConfigId: number, groupId: number, studentId: number, content: string, baseUpdatedAt?: string | null) {
     const group = await findGroupForActor(groupId, { id: studentId, role: 'student' });
     const sectionConfig = await sectionConfigs().findOne({ where: { id: sectionConfigId }, relations: ['config', 'config.project'] });
     if (!sectionConfig || sectionConfig.config.project.id !== group.project.id) throw notFound('Section introuvable');
     if (!sectionConfig.config.isEnabled) throw forbidden("Le rapport n'est pas ouvert pour ce projet");
+    if (sectionConfig.config.deadline && sectionConfig.config.deadline < new Date()) {
+      throw forbidden('La date limite est dépassée : le rapport est en lecture seule');
+    }
 
     const report = await this.getOrCreateReport(group);
-    if (report.status === 'submitted') throw forbidden('Le rapport a déjà été soumis');
+    if (report.status === 'submitted') throw forbidden('Le rapport a déjà été rendu');
 
-    const section = report.sections.find(item => item.sectionConfig.id === sectionConfigId)
-      ?? sections().create({ report, sectionConfig });
+    const existing = report.sections.find(item => item.sectionConfig.id === sectionConfigId);
+    if (existing && baseUpdatedAt !== undefined && existing.content !== content && existing.updatedBy?.id !== studentId) {
+      const seen = baseUpdatedAt ? new Date(baseUpdatedAt).getTime() : null;
+      if (seen !== new Date(existing.updatedAt).getTime()) {
+        throw conflict('Un autre membre du groupe a enregistré une version plus récente de cette section');
+      }
+    }
+
+    const section = existing ?? sections().create({ report, sectionConfig });
     section.content = content;
+    section.updatedBy = group.members.find(member => member.id === studentId) ?? null;
     return serializeReportSection(await sections().save(section));
   }
 
@@ -135,11 +151,11 @@ export class ReportService {
     if (group.project.id !== projectId) throw notFound('Aucun rapport à soumettre');
     const report = await this.findReport(projectId, groupId);
     if (!report) throw notFound('Aucun rapport à soumettre');
-    if (report.status === 'submitted') throw conflict('Le rapport a déjà été soumis');
+    if (report.status === 'submitted') throw conflict('Le rapport a déjà été rendu');
 
     const config = await findConfig(projectId);
     if (!config?.isEnabled) throw forbidden("Le rapport n'est pas ouvert pour ce projet");
-    if (config.deadline && config.deadline < new Date()) throw forbidden('La date limite de remise du rapport est dépassée');
+    if (config.deadline && config.deadline < new Date()) throw forbidden('La date limite est dépassée : le rapport ne peut plus être rendu');
 
     const missing = config.sections.filter(section => section.required
       && !report.sections.some(item => item.sectionConfig.id === section.id && item.content.replace(/<[^>]*>/g, '').trim() !== ''));

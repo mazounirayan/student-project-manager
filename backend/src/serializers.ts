@@ -169,7 +169,13 @@ export function serializeReportConfig(config: ReportConfig | null, projectId: nu
 }
 
 export function serializeReportSection(section: ReportSection) {
-  return { sectionConfigId: section.sectionConfig?.id, content: section.content, updatedAt: section.updatedAt };
+  const author = section.updatedBy;
+  return {
+    sectionConfigId: section.sectionConfig?.id,
+    content: section.content,
+    updatedAt: section.updatedAt,
+    updatedBy: author ? { id: author.id, firstName: author.firstName, lastName: author.lastName } : null,
+  };
 }
 
 export function serializeReport(report: Report) {

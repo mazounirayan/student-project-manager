@@ -332,7 +332,7 @@ export function buildStudentOverview(
         title: "Rapport du groupe",
         projectName: project.name,
         dueAt: project.reportDeadline,
-        href: groupHref,
+        href: `${groupHref}#rapport`,
       })
     }
 

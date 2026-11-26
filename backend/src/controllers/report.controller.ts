@@ -37,7 +37,7 @@ export class ReportController {
 
   saveSectionContent = async (req: Request, res: Response) => {
     const section = await this.reportService.saveSectionContent(
-      parseId(req.params.sectionConfigId), parseId(req.body.groupId), currentUser(req).id, req.body.content);
+      parseId(req.params.sectionConfigId), parseId(req.body.groupId), currentUser(req).id, req.body.content, req.body.baseUpdatedAt);
     res.json(section);
   };
 

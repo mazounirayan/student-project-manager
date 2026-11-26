@@ -101,7 +101,7 @@ export interface DemoReportConfig {
   projectId: number
   isEnabled: boolean
   format: "markdown" | "html"
-  deadline: string
+  deadline: string | null
   instructions?: string
   sections: DemoReportSectionConfig[]
 }
@@ -113,7 +113,13 @@ export interface DemoReport {
   title: string
   status: "draft" | "submitted"
   submittedAt?: string
-  sections: Array<{ sectionConfigId: number; content: string; updatedAt: string }>
+  sections: Array<{
+    sectionConfigId: number
+    content: string
+    updatedAt: string
+    /** Dernier membre du groupe ayant enregistré la section. */
+    updatedBy?: { id: number; firstName: string; lastName: string } | null
+  }>
 }
 
 export interface DemoDefense {

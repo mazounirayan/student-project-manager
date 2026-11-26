@@ -189,7 +189,7 @@ export function buildDemoDb(): DemoDb {
     format: "markdown" as const,
     deadline: iso(21 * DAY),
     instructions:
-      "Rédigez un rapport structuré en Markdown. Chaque groupe rend une version unique, relisez-vous avant la soumission définitive.",
+      "Rédigez un rapport structuré, dans un style clair. Chaque groupe rend une version unique : relisez-vous avant de le rendre.",
     sections: [
       {
         id: 101,
@@ -229,11 +229,20 @@ export function buildDemoDb(): DemoDb {
         {
           sectionConfigId: 101,
           content:
-            "## Introduction\n\nLe projet vise à digitaliser la gestion d’une bibliothèque municipale : catalogage des ouvrages, suivi des emprunts et relances automatiques des retards.",
+            "<p>Le projet vise à digitaliser la gestion d’une bibliothèque municipale : catalogage des ouvrages, suivi des emprunts et relances automatiques des retards.</p>" +
+            "<h3>Utilisateurs visés</h3>" +
+            "<ul><li>les bibliothécaires, qui enregistrent les ouvrages et les prêts ;</li><li>les adhérents, qui consultent le catalogue et leurs emprunts ;</li><li>la direction, qui suit la fréquentation.</li></ul>" +
+            "<p>Le périmètre de cette première version couvre le catalogue, les prêts et les retours. Les réservations et le paiement des amendes sont laissés pour une version ultérieure.</p>",
           updatedAt: iso(-2 * DAY),
+          updatedBy: { id: 11, firstName: "Brice", lastName: "Lemaire" },
         },
-        { sectionConfigId: 102, content: "", updatedAt: iso(-2 * DAY) },
-        { sectionConfigId: 103, content: "", updatedAt: iso(-2 * DAY) },
+        {
+          sectionConfigId: 102,
+          content:
+            "<p>L’application est une application web : un front Next.js, une API Express et une base MySQL. Le déploiement se fera sur un seul serveur, avec une base sauvegardée chaque nuit.</p>",
+          updatedAt: iso(-1 * DAY),
+          updatedBy: { id: 10, firstName: "Alex", lastName: "Moret" },
+        },
       ],
     },
     {
@@ -245,11 +254,10 @@ export function buildDemoDb(): DemoDb {
       sections: [
         {
           sectionConfigId: 101,
-          content: "## Introduction\n\nApplication web de gestion de bibliothèque avec espace adhérent.",
+          content: "<p>Application web de gestion de bibliothèque avec espace adhérent.</p>",
           updatedAt: iso(-1 * DAY),
+          updatedBy: { id: 13, firstName: "Diego", lastName: "Pereira" },
         },
-        { sectionConfigId: 102, content: "", updatedAt: iso(-1 * DAY) },
-        { sectionConfigId: 103, content: "", updatedAt: iso(-1 * DAY) },
       ],
     },
   ]

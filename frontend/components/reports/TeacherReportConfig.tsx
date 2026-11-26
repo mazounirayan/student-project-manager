@@ -1,411 +1,293 @@
-// components/reports/TeacherReportConfig.tsx
 'use client'
 
-import { BACKEND_URL, assertOk, errorMessage } from "@/lib/api"
-import { toast } from "sonner"
-import { confirmAction } from "@/lib/dialogs"
-import { useState, useEffect } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { ListPlus, Plus } from 'lucide-react'
+import { toast } from 'sonner'
+import { SectionCard } from '@/components/shared/SectionCard'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Trash2, Save, Trash } from 'lucide-react'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { ReportSectionConfigItem } from './ReportSectionConfigItem'
+import { apiPut, errorMessage } from '@/lib/api'
+import { confirmAction } from '@/lib/dialogs'
+import { formatTime, plural, toDatetimeLocal } from '@/lib/format'
+import { contentOf, isDeadlinePassed, isWritten, sortedSections, type GroupReport, type ReportConfig } from '@/lib/reports'
+import { ReportSectionConfigItem, type SectionDraft, type SectionErrors } from './ReportSectionConfigItem'
+import { useUnsavedWarning } from './use-unsaved-warning'
 
-export interface ReportSectionConfig {
-  id?: number
-  title: string
-  description: string
-  required: boolean
-  wordLimit?: number
-  order: number
+interface FormState {
+  isEnabled: boolean
+  instructions: string
+  /** Valeur d’un champ `datetime-local` (heure locale). */
+  deadline: string
+  sections: SectionDraft[]
 }
 
-interface ReportTemplate {
-  id?: number
-  projectId: number
-  isEnabled: boolean
-  sections: ReportSectionConfig[]
-  deadline?: string
-  format: 'markdown' | 'html'
-  instructions?: string
+const STARTER_SECTIONS: Array<Pick<SectionDraft, 'title' | 'description' | 'required' | 'wordLimit'>> = [
+  { title: 'Introduction et contexte', description: 'Présentez le besoin, les utilisateurs visés et le périmètre du projet.', required: true, wordLimit: '400' },
+  { title: 'Réalisation', description: 'Décrivez les choix techniques et la façon dont vous avez travaillé.', required: true, wordLimit: '600' },
+  { title: 'Bilan et perspectives', description: 'Ce que vous avez appris, les difficultés rencontrées et les suites possibles.', required: false, wordLimit: '300' },
+]
+
+let nextUid = 0
+const newUid = () => `s${++nextUid}`
+
+function toForm(config: ReportConfig): FormState {
+  return {
+    // Une première configuration s’ouvre déjà activée : l’enseignante vient justement demander un rapport.
+    isEnabled: config.id ? config.isEnabled : true,
+    instructions: config.instructions ?? '',
+    deadline: toDatetimeLocal(config.deadline),
+    sections: sortedSections(config).map((section) => ({
+      uid: newUid(),
+      id: section.id,
+      title: section.title,
+      description: section.description ?? '',
+      required: section.required,
+      wordLimit: section.wordLimit ? String(section.wordLimit) : '',
+    })),
+  }
+}
+
+const snapshot = (form: FormState) => JSON.stringify({ ...form, sections: form.sections.map(({ uid, ...rest }) => rest) })
+
+function validate(form: FormState): { sections: Record<string, SectionErrors>; summary: string | null } {
+  const sections: Record<string, SectionErrors> = {}
+  for (const section of form.sections) {
+    const errors: SectionErrors = {}
+    if (!section.title.trim()) errors.title = 'Donnez un titre à cette section.'
+    if (section.wordLimit.trim() && !/^[1-9]\d*$/.test(section.wordLimit.trim())) errors.wordLimit = 'Indiquez un nombre entier de mots, ou laissez vide.'
+    if (errors.title || errors.wordLimit) sections[section.uid] = errors
+  }
+  if (form.isEnabled && form.sections.length === 0) return { sections, summary: 'Ajoutez au moins une section : les groupes ne peuvent rien rédiger sans.' }
+  return { sections, summary: Object.keys(sections).length > 0 ? 'Corrigez les champs signalés avant d’enregistrer.' : null }
 }
 
 interface TeacherReportConfigProps {
   projectId: number
+  config: ReportConfig
+  /** Rapports déjà commencés : servent à prévenir quand on retire une section qui contient du texte. */
+  reports: GroupReport[]
+  onSaved: (config: ReportConfig) => void
+  onDirtyChange?: (dirty: boolean) => void
 }
 
-export function TeacherReportConfig({ projectId }: TeacherReportConfigProps) {
-  const [config, setConfig] = useState<ReportTemplate>({
-    projectId,
-    isEnabled: false,
-    sections: [],
-    format: 'markdown',
-    instructions: ''
-  })
-  const [loading, setLoading] = useState(true)
+/** Définition du rapport attendu : consignes, échéance et sections, dans l’ordre où les groupes les rédigent. */
+export function TeacherReportConfig({ projectId, config, reports, onSaved, onDirtyChange }: TeacherReportConfigProps) {
+  const isNew = !config.id
+  const [form, setForm] = useState<FormState>(() => toForm(config))
+  const [baseline, setBaseline] = useState(() => snapshot(form))
+  const [errors, setErrors] = useState<Record<string, SectionErrors>>({})
+  const [summary, setSummary] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<Date | null>(null)
+  const newestSection = useRef<string | null>(null)
 
+  const dirty = useMemo(() => snapshot(form) !== baseline, [form, baseline])
+  useUnsavedWarning(dirty)
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange])
+
+  // Une section ajoutée reçoit le focus pour qu’on puisse taper son titre tout de suite.
   useEffect(() => {
-    fetchConfig()
-  }, [projectId])
+    if (!newestSection.current) return
+    document.getElementById(`section-${newestSection.current}-title`)?.focus()
+    newestSection.current = null
+  }, [form.sections.length])
 
-const fetchConfig = async () => {
-  try {
-    const token = localStorage.getItem('token')
-    const response = await fetch(
-      `${BACKEND_URL}/api/reports/projects/${projectId}/report-config`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    )
+  const update = (updates: Partial<FormState>) => setForm((current) => ({ ...current, ...updates }))
+  const updateSection = (uid: string, updates: Partial<SectionDraft>) =>
+    setForm((current) => ({ ...current, sections: current.sections.map((section) => (section.uid === uid ? { ...section, ...updates } : section)) }))
 
-    if (response.ok) {
-      const data = await response.json()
-      if (data && data.id) {
-        setConfig({
-          ...data,
-          sections: data.sections || []
-        })
-      } else {
-        // Configuration par défaut si rien n’existe
-        setConfig({
-          projectId,
-          isEnabled: false,
-          sections: [],
-          format: 'markdown',
-          instructions: ''
-        })
-      }
-    } else {
-      // Si erreur 404, c’est normal (pas encore de config)
-      setConfig({
-        projectId,
-        isEnabled: false,
-        sections: [],
-        format: 'markdown',
-        instructions: ''
-      })
-    }
-  } catch (error) {
-    setConfig({
-      projectId,
-      isEnabled: false,
-      sections: [],
-      format: 'markdown',
-      instructions: ''
+  const addSections = (drafts: Array<Partial<SectionDraft>>) => {
+    const added = drafts.map<SectionDraft>((draft) => ({ uid: newUid(), title: '', description: '', required: true, wordLimit: '', ...draft }))
+    newestSection.current = added[0].uid
+    setForm((current) => ({ ...current, sections: [...current.sections, ...added] }))
+    setSummary(null)
+  }
+
+  const moveSection = (index: number, delta: -1 | 1) =>
+    setForm((current) => {
+      const sections = [...current.sections]
+      const [moved] = sections.splice(index, 1)
+      sections.splice(index + delta, 0, moved)
+      return { ...current, sections }
     })
-  } finally {
-    setLoading(false)
-  }
-}
 
-  const addSection = () => {
-    setConfig(prev => ({
-      ...prev,
-      sections: [
-        ...prev.sections,
-        {
-          title: `Nouvelle section ${prev.sections.length + 1}`,
-          description: '',
-          required: true,
-          order: prev.sections.length,
-          wordLimit: undefined
-        }
-      ]
-    }))
-  }
-
-  const updateSection = (index: number, updates: Partial<ReportSectionConfig>) => {
-    setConfig(prev => ({
-      ...prev,
-      sections: prev.sections.map((section, i) => 
-        i === index ? { ...section, ...updates } : section
-      )
-    }))
-  }
-
-
-const removeSection = async (index: number) => {
-  const section = config.sections[index];
-  
-  // Si la section a un ID, elle existe en base de données
-  if (section.id) {
-    const confirmed = await confirmAction({ title: 'Supprimer cette section ?', description: 'Cette action supprimera aussi tout le contenu déjà rédigé par les étudiants', confirmText: 'Oui, supprimer', destructive: true });
-
-    if (!confirmed) return;
-
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(
-        `${BACKEND_URL}/api/reports/section-config/${section.id}`,
-        {
-          method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
-
-      await assertOk(response)
-
-      toast.success('Section supprimée');
-    } catch (error) {
-      toast.error('Erreur', { description: errorMessage(error, 'Impossible de supprimer la section') });
-      return; // Ne pas supprimer du state si erreur
+  const removeSection = async (section: SectionDraft) => {
+    const written = section.id ? reports.filter((report) => isWritten(contentOf(report, section.id as number)?.content)).length : 0
+    if (written > 0) {
+      const confirmed = await confirmAction({
+        title: 'Retirer cette section ?',
+        description: `${plural(written, 'groupe a', 'groupes ont')} déjà écrit dans « ${section.title.trim() || 'cette section'} ». Ce texte sera supprimé quand vous enregistrerez.`,
+        confirmText: 'Retirer la section',
+        destructive: true,
+      })
+      if (!confirmed) return
     }
+    setForm((current) => ({ ...current, sections: current.sections.filter((item) => item.uid !== section.uid) }))
   }
 
-  setConfig(prev => ({
-    ...prev,
-    sections: prev.sections.filter((_, i) => i !== index)
-  }));
-};
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    const result = validate(form)
+    setErrors(result.sections)
+    setSummary(result.summary)
+    if (result.summary) {
+      // Le focus va au premier champ à corriger, pour que le message qui l’accompagne soit lu.
+      const first = form.sections.find((section) => result.sections[section.uid])
+      if (first) document.getElementById(`section-${first.uid}-${result.sections[first.uid].title ? 'title' : 'wordlimit'}`)?.focus()
+      return
+    }
+    const deadline = form.deadline ? new Date(form.deadline).toISOString() : null
+    if (form.isEnabled && isDeadlinePassed(deadline)) {
+      const confirmed = await confirmAction({
+        title: 'La date limite est déjà passée',
+        description: 'Les groupes ne pourront ni modifier ni rendre leur rapport. Vous pourrez la repousser plus tard.',
+        confirmText: 'Enregistrer quand même',
+      })
+      if (!confirmed) return
+    }
 
-const deleteConfig = async () => {
-  if (!config.id) {
-    // Si pas d’ID, juste réinitialiser le state
-    setConfig({
-      projectId,
-      isEnabled: false,
-      sections: [],
-      format: 'markdown',
-      instructions: ''
-    });
-    return;
-  }
-
-  const confirmed = await confirmAction({
-    title: 'Supprimer la configuration ?',
-    description: 'Cette action est irréversible : les sections configurées et tous les rapports rédigés par les étudiants seront supprimés.',
-    confirmText: 'Tout supprimer',
-    destructive: true,
-  });
-
-  if (!confirmed) return;
-
-  try {
-    const token = localStorage.getItem('token');
-    const response = await fetch(
-      `${BACKEND_URL}/api/reports/projects/${projectId}/report-config`,
-      {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      }
-    );
-
-    await assertOk(response)
-
-    toast.success('Configuration supprimée');
-
-    setConfig({
-      projectId,
-      isEnabled: false,
-      sections: [],
-      format: 'markdown',
-      instructions: ''
-    });
-  } catch (error) {
-    toast.error('Erreur', { description: errorMessage(error, 'Impossible de supprimer la configuration') });
-  }
-};
-
-  const moveSection = (fromIndex: number, toIndex: number) => {
-    const sections = [...config.sections]
-    const [movedSection] = sections.splice(fromIndex, 1)
-    sections.splice(toIndex, 0, movedSection)
-    
-    const updatedSections = sections.map((section, index) => ({
-      ...section,
-      order: index
-    }))
-
-    setConfig(prev => ({ ...prev, sections: updatedSections }))
-  }
-
-  const saveConfig = async () => {
     setSaving(true)
     try {
-      const token = localStorage.getItem('token')
-      const response = await fetch(
-        `${BACKEND_URL}/api/reports/projects/${projectId}/report-config`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify(config)
-        }
-      )
-
-      await assertOk(response)
-
-      toast.success('Configuration sauvegardée')
-
-      // Recharger la configuration pour avoir les IDs
-      await fetchConfig()
+      const saved = await apiPut<ReportConfig>(`/reports/projects/${projectId}/report-config`, {
+        isEnabled: form.isEnabled,
+        format: config.format,
+        deadline,
+        instructions: form.instructions.trim() || null,
+        sections: form.sections.map((section) => ({
+          id: section.id,
+          title: section.title.trim(),
+          description: section.description.trim(),
+          required: section.required,
+          wordLimit: section.wordLimit.trim() ? Number(section.wordLimit) : null,
+        })),
+      })
+      const next = toForm(saved)
+      setForm(next)
+      setBaseline(snapshot(next))
+      setSavedAt(new Date())
+      toast.success(form.isEnabled ? 'Consignes enregistrées' : 'Consignes enregistrées, le rapport n’est pas demandé aux groupes')
+      onSaved(saved)
     } catch (error) {
-      toast.error('Erreur', { description: errorMessage(error, 'Impossible de sauvegarder la configuration') })
+      toast.error(errorMessage(error, 'Impossible d’enregistrer les consignes du rapport.'))
     } finally {
       setSaving(false)
     }
   }
 
-
-
-  if (loading) {
-    return (
-      <Card>
-        <CardContent className="p-6">
-          <div className="text-center">Chargement...</div>
-        </CardContent>
-      </Card>
-    )
+  const reset = () => {
+    const original = toForm(config)
+    setForm(original)
+    setBaseline(snapshot(original))
+    setErrors({})
+    setSummary(null)
   }
 
- return (
- <div className="h-[calc(100vh-6rem)] overflow-y-auto px-4 sm:px-8 py-6 space-y-6 bg-background">
-    <Card className="max-w-3xl mx-auto shadow-md">
-      <CardHeader className="bg-muted rounded-t-lg border-b">
-        <div className="flex flex-wrap items-center justify-between">
-          <div>
-            <CardTitle className="text-lg font-semibold text-foreground">
-              Configuration du rapport
-            </CardTitle>
-            <CardDescription className="text-sm text-muted-foreground">
-              Activez et configurez les rapports pour ce projet
-            </CardDescription>
+  return (
+    <form onSubmit={save} noValidate className="max-w-3xl space-y-6">
+      <SectionCard title="Rapport du projet" description="Ce que les groupes voient en ouvrant l’onglet Rapport de leur espace.">
+        <div className="space-y-5">
+          <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/40 p-4">
+            <div className="space-y-1">
+              <Label htmlFor="report-enabled" className="text-base">
+                Demander un rapport aux groupes
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {form.isEnabled
+                  ? 'Les groupes peuvent rédiger leur rapport en ligne, puis le rendre.'
+                  : 'Les groupes ne voient aucun rapport. Les textes déjà rédigés sont conservés.'}
+              </p>
+            </div>
+            <Switch id="report-enabled" checked={form.isEnabled} onCheckedChange={(isEnabled) => update({ isEnabled })} className="data-[state=unchecked]:bg-muted-foreground/40" />
           </div>
-          {config.id && (
-            <Button 
-              onClick={deleteConfig} 
-              variant="destructive" 
-              size="sm"
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Supprimer
-            </Button>
-          )}
-        </div>
-      </CardHeader>
 
-      <CardContent className="space-y-6 p-6">
-        <div className="flex flex-wrap items-center justify-between p-4 border rounded-lg bg-card shadow-sm">
-          <div>
-            <h3 className="font-semibold text-foreground">Rapport activé</h3>
-            <p className="text-sm text-muted-foreground">
-              Les étudiants pourront rédiger leur rapport en ligne
-            </p>
+          <div className="space-y-2">
+            <Label htmlFor="report-instructions">Consignes générales</Label>
+            <Textarea
+              id="report-instructions"
+              value={form.instructions}
+              onChange={(event) => update({ instructions: event.target.value })}
+              placeholder="Ton attendu, public visé, ce que vous évaluerez en priorité…"
+              rows={4}
+            />
           </div>
-          <Switch
-            checked={config.isEnabled}
-            onCheckedChange={(enabled) =>
-              setConfig((prev) => ({ ...prev, isEnabled: enabled }))
-            }
-             
-          />
-        </div>
 
-        {config.isEnabled && (
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <Label htmlFor="instructions">Instructions générales</Label>
-              <Textarea
-                id="instructions"
-                placeholder="Instructions pour la rédaction du rapport..."
-                value={config.instructions}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, instructions: e.target.value }))
-                }
-                rows={5}
-                className="break-words resize-none focus:ring-2 focus:ring-primary focus:border-primary"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Format de rédaction</Label>
-              <Select
-                value={config.format}
-                onValueChange={(format: 'markdown' | 'html') =>
-                  setConfig((prev) => ({ ...prev, format }))
-                }
-              >
-                <SelectTrigger className="focus:ring-2 focus:ring-primary focus:border-primary">
-                  <SelectValue placeholder="Choisir un format" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="markdown">Markdown (recommandé)</SelectItem>
-                  <SelectItem value="html">HTML</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="deadline">Date limite de rendu</Label>
-              <Input
-                id="deadline"
-                type="datetime-local"
-                value={config.deadline}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, deadline: e.target.value }))
-                }
-                className="focus:ring-2 focus:ring-primary focus:border-primary"
-              />
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between">
-                <Label className="font-medium">Sections du rapport</Label>
-                <Button onClick={addSection} variant="outline" size="sm">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Ajouter une section
+          <div className="space-y-2">
+            <Label htmlFor="report-deadline">Date limite</Label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input id="report-deadline" type="datetime-local" value={form.deadline} onChange={(event) => update({ deadline: event.target.value })} className="w-full sm:w-64" />
+              {form.deadline && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => update({ deadline: '' })}>
+                  Retirer la date
                 </Button>
-              </div>
-
-              {config.sections.length === 0 ? (
-                <Alert className="border-dashed">
-                  <AlertDescription>
-                    Aucune section définie — les étudiants auront un éditeur libre.
-                  </AlertDescription>
-                </Alert>
-              ) : (
-                <div className="space-y-4">
-                  {config.sections.map((section, index) => (
-                    <ReportSectionConfigItem
-                      key={index}
-                      section={section}
-                      index={index}
-                      onUpdate={(updates) => updateSection(index, updates)}
-                      onRemove={() => removeSection(index)}
-                      onMoveUp={index > 0 ? () => moveSection(index, index - 1) : undefined}
-                      onMoveDown={index < config.sections.length - 1 ? () => moveSection(index, index + 1) : undefined}
-                    />
-                  ))}
-                </div>
               )}
             </div>
+            <p className="text-sm text-muted-foreground">
+              Après cette date, le rapport passe en lecture seule : les groupes ne peuvent plus le modifier ni le rendre. Sans date, ils le rendent quand ils veulent.
+            </p>
+          </div>
+        </div>
+      </SectionCard>
 
-            <div className="flex flex-wrap gap-3 pt-4 border-t">
-              <Button onClick={saveConfig} disabled={saving}>
-                <Save className="h-4 w-4 mr-2" />
-                {saving ? 'Sauvegarde...' : 'Sauvegarder'}
+      <SectionCard title="Sections du rapport" description="Les groupes rédigent chaque section dans cet ordre, avec vos consignes à côté de l’éditeur.">
+        {form.sections.length === 0 ? (
+          <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-5">
+            <p className="text-sm text-muted-foreground">Aucune section pour l’instant. Sans section, les groupes n’ont rien à rédiger.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => addSections(STARTER_SECTIONS)}>
+                <ListPlus aria-hidden="true" />
+                Partir d’une structure type
               </Button>
-
-              <Button onClick={deleteConfig} variant="outline" className="text-destructive">
-                <Trash className="h-4 w-4 mr-2" />
-                Supprimer la configuration
+              <Button type="button" variant="outline" onClick={() => addSections([{}])}>
+                <Plus aria-hidden="true" />
+                Ajouter une section
               </Button>
             </div>
+            <p className="text-xs text-muted-foreground">La structure type propose trois sections : introduction, réalisation, bilan. Vous pouvez tout modifier ensuite.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <ol className="space-y-4">
+              {form.sections.map((section, index) => (
+                <ReportSectionConfigItem
+                  key={section.uid}
+                  section={section}
+                  position={index + 1}
+                  count={form.sections.length}
+                  errors={errors[section.uid]}
+                  onUpdate={(updates) => updateSection(section.uid, updates)}
+                  onRemove={() => removeSection(section)}
+                  onMove={(delta) => moveSection(index, delta)}
+                />
+              ))}
+            </ol>
+            <Button type="button" variant="outline" onClick={() => addSections([{}])}>
+              <Plus aria-hidden="true" />
+              Ajouter une section
+            </Button>
           </div>
         )}
-      </CardContent>
-    </Card>
-  </div>
-)
+      </SectionCard>
 
+      <div className="sticky bottom-0 z-10 -mx-4 border-t bg-background px-4 py-3 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+        <div className="flex max-w-3xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <p role="status" className={summary ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>
+            {summary ?? (dirty ? 'Modifications non enregistrées' : savedAt ? `Enregistré à ${formatTime(savedAt)}` : isNew ? 'Pas encore enregistré' : 'Aucune modification')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {dirty && !isNew && (
+              <Button type="button" variant="outline" onClick={reset} disabled={saving}>
+                Annuler les modifications
+              </Button>
+            )}
+            <Button type="submit" disabled={saving || (!dirty && !isNew)}>
+              {saving ? 'Enregistrement…' : 'Enregistrer'}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </form>
+  )
 }

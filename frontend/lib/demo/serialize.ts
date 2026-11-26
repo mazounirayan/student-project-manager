@@ -2,7 +2,7 @@
  * Sérialisation : transforme les lignes de la base de démo en réponses JSON
  * calquées sur les formes attendues par le frontend (mêmes champs que l’API).
  */
-import type { DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoSubmission, DemoUser } from "./types"
+import type { DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoReport, DemoSubmission, DemoUser } from "./types"
 
 export function serializeUser(db: DemoDb, idOrUser: number | DemoUser): Record<string, unknown> {
   const user = typeof idOrUser === "number" ? db.users.find((u) => u.id === idOrUser) : idOrUser
@@ -121,6 +121,25 @@ export function serializeProjectSummary(db: DemoDb, project: DemoProject): Recor
   }
 }
 
+/** Rapport d’un groupe tel que l’API le renvoie. */
+export function serializeReport(db: DemoDb, report: DemoReport): Record<string, unknown> {
+  const group = db.groups.find((g) => g.id === report.groupId)
+  const lastEdit = report.sections.reduce((latest, s) => (s.updatedAt > latest ? s.updatedAt : latest), "")
+  return {
+    id: report.id,
+    projectId: report.projectId,
+    groupId: report.groupId,
+    group: group ? { id: group.id, name: group.name } : null,
+    title: report.title,
+    description: null,
+    status: report.status,
+    submittedAt: report.submittedAt ?? null,
+    sections: report.sections.map((s) => ({ ...s, updatedBy: s.updatedBy ?? null })),
+    createdAt: report.sections[0]?.updatedAt || null,
+    updatedAt: report.submittedAt ?? (lastEdit || null),
+  }
+}
+
 /**
  * Détail complet d’un projet, relations incluses. Pour un étudiant, les rendus et
  * rapports des autres groupes sont exclus.
@@ -160,21 +179,7 @@ export function serializeProjectDetail(db: DemoDb, project: DemoProject, viewer:
       : null,
     groups: groups.map((g) => serializeGroup(db, g)),
     deliverables: deliverables.map((d) => serializeDeliverable(db, d, ownGroupIds)),
-    reports: reports.map((r) => ({
-      id: r.id,
-      projectId: r.projectId,
-      groupId: r.groupId,
-      group: db.groups.find((g) => g.id === r.groupId)
-        ? { id: r.groupId, name: db.groups.find((g) => g.id === r.groupId)?.name }
-        : null,
-      title: r.title,
-      description: r.title,
-      status: r.status,
-      submittedAt: r.submittedAt ?? null,
-      sections: r.sections,
-      createdAt: r.sections[0]?.updatedAt ?? project.createdAt,
-      updatedAt: r.sections[0]?.updatedAt ?? project.createdAt,
-    })),
+    reports: reports.map((r) => serializeReport(db, r)),
     defenses: defenses.map((d) => ({
       id: d.id,
       projectId: d.projectId,

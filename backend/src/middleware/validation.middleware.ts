@@ -225,5 +225,6 @@ export const validateSectionConfig = [
 export const validateSectionContent = [
   body('groupId').isInt({ min: 1 }).withMessage('Groupe invalide'),
   body('content').isString().isLength({ max: 200_000 }).withMessage('Contenu invalide ou trop long'),
+  body('baseUpdatedAt').optional({ values: 'null' }).isISO8601().withMessage('Version de départ invalide'),
   handleValidationErrors,
 ];

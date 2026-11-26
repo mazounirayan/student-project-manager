@@ -34,6 +34,7 @@ export function GroupDetailsPageContent({ params }: GroupDetailsPageProps) {
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [tab, setTab] = useState("deliverables")
 
   const load = useCallback(
     async (silent = false) => {
@@ -53,6 +54,16 @@ export function GroupDetailsPageContent({ params }: GroupDetailsPageProps) {
   useEffect(() => {
     load()
   }, [load])
+
+  // #rapport ouvre directement l’onglet du rapport (lien « Rédiger le rapport » de l’accueil et de Mon groupe).
+  useEffect(() => {
+    if (window.location.hash === "#rapport") setTab("reports")
+  }, [])
+
+  const changeTab = (value: string) => {
+    setTab(value)
+    window.history.replaceState(null, "", value === "reports" ? "#rapport" : window.location.pathname + window.location.search)
+  }
 
   if (loading || studentId === undefined) {
     return (
@@ -109,7 +120,7 @@ export function GroupDetailsPageContent({ params }: GroupDetailsPageProps) {
               <GroupMembers group={group} />
             </div>
 
-            <Tabs defaultValue="deliverables" className="space-y-4">
+            <Tabs value={tab} onValueChange={changeTab} className="space-y-4">
               <TabsList>
                 <TabsTrigger value="deliverables">Livrables</TabsTrigger>
                 <TabsTrigger value="reports">Rapport</TabsTrigger>
@@ -137,7 +148,8 @@ export function GroupDetailsPageContent({ params }: GroupDetailsPageProps) {
                 )}
               </TabsContent>
 
-              <TabsContent value="reports" className="space-y-4">
+              {/* Toujours monté : changer d’onglet ne doit pas interrompre la rédaction ni perdre un texte en attente d’enregistrement. */}
+              <TabsContent value="reports" forceMount className="space-y-4 data-[state=inactive]:hidden">
                 <StudentReportView projectId={Number(projectId)} groupId={group.id} />
               </TabsContent>
             </Tabs>

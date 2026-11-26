@@ -1,207 +1,206 @@
 'use client'
 
-import { formatDateTime } from "@/lib/format"
-import { useState } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { useState, type ReactNode } from 'react'
+import { CheckCircle2, Download, Loader2, PenLine } from 'lucide-react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
-import { 
-  FileText, 
-  Download, 
-  Printer, 
-  Eye, 
-  EyeOff,
-  Users 
-} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { downloadFile, errorMessage } from '@/lib/api'
+import { STATIC_DEMO } from '@/lib/demo/mode'
+import { formatDateFull, formatDateTime, formatNumber, formatTime, plural } from '@/lib/format'
+import { fullName } from '@/lib/people'
+import {
+  contentOf,
+  countWords,
+  formatDeadline,
+  isWritten,
+  sortedSections,
+  STATE_LABELS,
+  type GroupOverview,
+  type ReportConfig,
+  type SectionConfig,
+} from '@/lib/reports'
 import { ReportContent } from './ReportContent'
-import type { Report } from '@/types/reports'
+
+const sectionDomId = (id: number) => `rapport-section-${id}`
+const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 
 interface ReportViewerProps {
-  report: Report
-  onExport?: () => void
-  onPrint?: () => void
+  row: GroupOverview
+  config: ReportConfig
+  /** Panneau de notation, affiché sous le rapport. */
+  children?: ReactNode
 }
 
-export function ReportViewer({ report, onExport, onPrint }: ReportViewerProps) {
-  const [visibleSections, setVisibleSections] = useState<number[]>(
-    report.sections?.map(s => s.id) || []
-  )
-  const [viewMode, setViewMode] = useState<'all' | 'completed'>('all')
+/** Lecture d’un rapport, section par section, avec un plan à gauche et le passage à la notation. */
+export function ReportViewer({ row, config, children }: ReportViewerProps) {
+  const { report, progress, grade } = row
+  const sections = sortedSections(config)
+  const [exporting, setExporting] = useState(false)
 
-  const toggleSection = (sectionId: number) => {
-    setVisibleSections(prev => 
-      prev.includes(sectionId) 
-        ? prev.filter(id => id !== sectionId)
-        : [...prev, sectionId]
-    )
-  }
+  if (!report) return null
 
-  const toggleAllSections = () => {
-    if (visibleSections.length === report.sections?.length) {
-      setVisibleSections([])
-    } else {
-      setVisibleSections(report.sections?.map(s => s.id) || [])
+  const exportPdf = async () => {
+    setExporting(true)
+    try {
+      await downloadFile(`/reports/${report.id}/export`, `rapport-${row.group.name}.pdf`)
+    } catch (error) {
+      toast.error(errorMessage(error, 'Impossible d’exporter le rapport en PDF.'))
+    } finally {
+      setExporting(false)
     }
   }
-
-  const sectionsToDisplay = report.sections?.filter(section => {
-    if (viewMode === 'completed') {
-      return section.content && section.content.trim() !== ''
-    }
-    return true
-  }) || []
-
-  const completedCount = report.sections?.filter(s => s.content && s.content.trim() !== '').length || 0
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-start justify-between">
-          <div className="space-y-2">
-            <CardTitle className="flex flex-wrap items-center gap-2">
-              <FileText className="h-5 w-5" />
-              {report.title}
-            </CardTitle>
-            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <Users className="h-4 w-4" />
-              <span>{report.group?.name || `Groupe ${report.groupId}`}</span>
-              {report.group?.members && (
-                <Badge variant="outline">
-                  {report.group.members.length} membre{report.group.members.length > 1 ? 's' : ''}
-                </Badge>
-              )}
-            </div>
-            {report.description && (
-              <p className="text-sm text-muted-foreground">{report.description}</p>
-            )}
+    <div className="space-y-6">
+      <header className="space-y-4 rounded-xl border bg-card p-5 text-card-foreground shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+          <div className="min-w-0 space-y-1">
+            <h2 className="text-xl font-semibold leading-snug">{row.group.name}</h2>
+            <p className="text-sm text-muted-foreground">{row.group.members.map(fullName).join(', ') || 'Aucun membre'}</p>
           </div>
-
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={completedCount === report.sections?.length ? 'default' : 'secondary'}>
-              {completedCount}/{report.sections?.length} sections
-            </Badge>
-            {onPrint && (
-              <Button variant="outline" size="icon" onClick={onPrint}>
-                <Printer className="h-4 w-4" />
-              </Button>
-            )}
-            {onExport && (
-              <Button variant="outline" size="icon" onClick={onExport}>
-                <Download className="h-4 w-4" />
+            <Button variant="outline" onClick={() => scrollTo('notation-rapport')}>
+              <PenLine aria-hidden="true" />
+              Noter ce rapport
+            </Button>
+            {!STATIC_DEMO && (
+              <Button variant="outline" onClick={exportPdf} disabled={exporting}>
+                {exporting ? <Loader2 aria-hidden="true" className="animate-spin" /> : <Download aria-hidden="true" />}
+                Exporter en PDF
               </Button>
             )}
           </div>
         </div>
-      </CardHeader>
 
-      <CardContent className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between p-3 bg-muted/50 rounded-lg">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button 
-              variant={viewMode === 'all' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setViewMode('all')}
-            >
-              Toutes les sections
-            </Button>
-            <Button 
-              variant={viewMode === 'completed' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setViewMode('completed')}
-            >
-              Sections complétées
-            </Button>
-          </div>
-
-          <Button 
-            variant="ghost" 
-            size="sm"
-            onClick={toggleAllSections}
-          >
-            {visibleSections.length === report.sections?.length ? (
-              <>
-                <EyeOff className="mr-2 h-4 w-4" />
-                Tout masquer
-              </>
+        <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <Fact label="État">
+            {row.state === 'submitted' ? (
+              <Badge variant="secondary">
+                <CheckCircle2 aria-hidden="true" />
+                {STATE_LABELS.submitted}
+              </Badge>
+            ) : row.overdue ? (
+              <Badge variant="destructive">Non rendu</Badge>
             ) : (
-              <>
-                <Eye className="mr-2 h-4 w-4" />
-                Tout afficher
-              </>
+              <Badge variant="outline">{STATE_LABELS[row.state]}</Badge>
             )}
-          </Button>
-        </div>
+          </Fact>
+          <Fact label="Rédigé">
+            {progress.written} sur {plural(progress.total, 'section')} · {plural(progress.words, 'mot')}
+          </Fact>
+          <Fact label="Dernière activité">{row.lastActivity ? formatDateTime(row.lastActivity) : '–'}</Fact>
+          <Fact label="Note">
+            {grade ? (
+              <span className="tabular-nums">
+                {formatNumber(grade.totalScore, 1)} / 20{grade.status !== 'validated' && ' (provisoire)'}
+              </span>
+            ) : (
+              'Pas encore notée'
+            )}
+          </Fact>
+        </dl>
 
-        <div className="flex flex-wrap gap-2">
-          {report.sections?.map(section => (
-            <Button
-              key={section.id}
-              variant={visibleSections.includes(section.id) ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => toggleSection(section.id)}
-              className="relative"
-            >
-              {section.title}
-              {section.content && section.content.trim() !== '' && (
-                <Badge 
-                  variant="secondary" 
-                  className="ml-2 h-4 w-4 p-0 flex items-center justify-center bg-green-500 text-white"
+        <p className="rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
+          {row.state === 'submitted'
+            ? `Rendu le ${formatDateFull(report.submittedAt)} à ${formatTime(report.submittedAt)}. Le texte ci-dessous est définitif.`
+            : row.overdue
+              ? `Non rendu : la date limite (${formatDeadline(config.deadline)}) est passée. Vous lisez la dernière version enregistrée.`
+              : 'Le groupe n’a pas encore rendu son rapport : le texte peut encore changer.'}
+        </p>
+      </header>
+
+      <div className="grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
+        <nav aria-label="Sections du rapport" className="self-start lg:sticky lg:top-4">
+          <p className="mb-1 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Sections</p>
+          <ol className="space-y-0.5">
+            {sections.map((section, index) => (
+              <li key={section.id}>
+                <button
+                  type="button"
+                  onClick={() => scrollTo(sectionDomId(section.id))}
+                  className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring"
                 >
-                  ✓
-                </Badge>
-              )}
-            </Button>
+                  <span className="tabular-nums text-muted-foreground">{index + 1}.</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{section.title}</span>
+                    <NavStatus section={section} content={contentOf(report, section.id)?.content} />
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </nav>
+
+        <div className="min-w-0 space-y-8">
+          {sections.length === 0 && <p className="text-sm text-muted-foreground">Aucune section n’est définie pour ce rapport.</p>}
+          {sections.map((section, index) => (
+            <SectionReading key={section.id} index={index + 1} section={section} content={contentOf(report, section.id)} />
           ))}
         </div>
+      </div>
 
-        <Separator />
+      <div id="notation-rapport" className="scroll-mt-4">
+        {children}
+      </div>
+    </div>
+  )
+}
 
-        <div className="space-y-8">
-          {sectionsToDisplay.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>Aucune section à afficher</p>
-            </div>
-          ) : (
-            sectionsToDisplay
-              .sort((a, b) => a.orderIndex - b.orderIndex)
-              .map(section => {
-                if (!visibleSections.includes(section.id)) return null
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-0.5">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="font-medium">{children}</dd>
+    </div>
+  )
+}
 
-                const isEmpty = !section.content || section.content.trim() === ''
+function NavStatus({ section, content }: { section: SectionConfig; content?: string }) {
+  if (!isWritten(content)) {
+    return <span className={section.required ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>{section.required ? 'Vide, obligatoire' : 'Vide'}</span>
+  }
+  return <span className="text-xs tabular-nums text-muted-foreground">{plural(countWords(content), 'mot')}</span>
+}
 
-                return (
-                  <div key={section.id} className="space-y-3">
-                    <div className="flex flex-wrap items-center justify-between">
-                      <h3 className="text-lg font-semibold">{section.title}</h3>
-                      {isEmpty && (
-                        <Badge variant="outline" className="text-orange-600">
-                          Non complété
-                        </Badge>
-                      )}
-                    </div>
+function SectionReading({ index, section, content }: { index: number; section: SectionConfig; content?: { content: string; updatedAt: string; updatedBy?: { firstName: string; lastName: string } | null } }) {
+  const written = isWritten(content?.content)
+  const words = countWords(content?.content)
+  const over = Boolean(section.wordLimit && words > section.wordLimit)
 
-                    {isEmpty ? (
-                      <div className="p-6 bg-muted/30 rounded-lg border border-dashed text-center text-muted-foreground">
-                        <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                        <p className="text-sm">Cette section n’a pas encore été rédigée</p>
-                      </div>
-                    ) : (
-                      <div className="prose prose-sm max-w-none dark:prose-invert bg-card p-6 rounded-lg border">
-                        <ReportContent>{section.content}</ReportContent>
-                      </div>
-                    )}
+  return (
+    <section id={sectionDomId(section.id)} aria-labelledby={`${sectionDomId(section.id)}-title`} className="scroll-mt-4 space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h3 id={`${sectionDomId(section.id)}-title`} className="text-lg font-semibold leading-snug">
+          {index}. {section.title}
+        </h3>
+        {written && (
+          <p className={over ? 'text-sm tabular-nums text-destructive' : 'text-sm tabular-nums text-muted-foreground'}>
+            {section.wordLimit ? `${words} / ${section.wordLimit} mots${over ? ', limite dépassée' : ''}` : plural(words, 'mot')}
+          </p>
+        )}
+      </div>
 
-                    <div className="text-xs text-muted-foreground">
-                      Dernière modification : {formatDateTime(section.updatedAt)}
-                    </div>
-                  </div>
-                )
-              })
-          )}
-        </div>
-      </CardContent>
-    </Card>
+      {section.description && (
+        <details className="text-sm text-muted-foreground">
+          <summary className="w-fit cursor-pointer rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Consignes données aux groupes</summary>
+          <p className="mt-1 whitespace-pre-line">{section.description}</p>
+        </details>
+      )}
+
+      {written ? (
+        <>
+          <ReportContent className="max-w-[46rem] rounded-xl border bg-card px-5 py-4">{content!.content}</ReportContent>
+          <p className="text-xs text-muted-foreground">
+            Dernière modification le {formatDateTime(content!.updatedAt)}
+            {content!.updatedBy && ` par ${fullName(content!.updatedBy)}`}
+          </p>
+        </>
+      ) : (
+        <p className="rounded-lg border border-dashed px-4 py-3 text-sm text-muted-foreground">
+          Rien n’a été écrit dans cette section.{section.required && ' Elle est obligatoire.'}
+        </p>
+      )}
+    </section>
   )
 }

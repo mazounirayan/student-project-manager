@@ -411,6 +411,10 @@ export class ReportSection {
 
   @ManyToOne(() => ReportSectionConfig, { onDelete: 'CASCADE' })
   sectionConfig!: ReportSectionConfig;
+
+  /** Dernier membre du groupe ayant enregistré cette section. */
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  updatedBy?: User | null;
 }
 
 @Entity()

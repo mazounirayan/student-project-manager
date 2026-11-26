@@ -8,6 +8,7 @@ import { MainLayout } from "@/components/layout/main-layout"
 import { PageContainer, PageHeader } from "@/components/layout/page"
 import { EmptyState } from "@/components/shared/EmptyState"
 import { ErrorState } from "@/components/shared/ErrorState"
+import { GroupReportStatus } from "@/components/reports/GroupReportStatus"
 import { SectionCard } from "@/components/shared/SectionCard"
 import { CardsSkeleton } from "@/components/shared/Skeletons"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -105,6 +106,7 @@ function MyGroupPageContent() {
                     </li>
                   ))}
                 </ul>
+                <GroupReportStatus projectId={project.id} groupId={group!.id} />
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button asChild>
                     <Link href={projectPath("/my-projects", project.id, "/group")}>Ouvrir l’espace du groupe</Link>

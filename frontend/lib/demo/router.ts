@@ -4,7 +4,7 @@
  */
 import { DEMO_ACCOUNTS } from "./mode"
 import { loadDemoDb, nextId, persist } from "./store"
-import { serializeSession, serializeGrid, serializeGroup, serializeProjectDetail, serializeProjectSummary, serializeSubmission, serializeUser } from "./serialize"
+import { serializeSession, serializeGrid, serializeGroup, serializeProjectDetail, serializeProjectSummary, serializeReport, serializeSubmission, serializeUser } from "./serialize"
 import { parseCsv, parseJson } from "../student-import"
 import type { DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoPromotion, DemoReport, DemoSession, DemoUser } from "./types"
 
@@ -81,6 +81,11 @@ function canAccessProject(db: DemoDb, user: DemoUser, projectId: number): boolea
   if (user.role === "teacher") return project.teacherId === user.id
   const promotion = db.promotions.find((p) => p.id === project.promotionId)
   return project.status === "visible" && Boolean(promotion?.studentIds.includes(user.id))
+}
+
+/** Texte brut d’une section (balises de l’éditeur retirées). */
+function htmlText(content: string): string {
+  return content.replace(/<[^>]*>/g, "").trim()
 }
 
 /** Le rapport d’un groupe est créé à la première modification ou soumission. */
@@ -1174,80 +1179,57 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
     if (m && method === "GET") {
       const owner = requireTeacher(db, init, headers)
       assertOwnsProject(db, owner, Number(m![1]))
-      const reports = db.reports.filter((r) => r.projectId === Number(m![1]))
-      return json(reports.map((r) => {
-        const group = db.groups.find((g) => g.id === r.groupId)
-        return {
-          id: r.id,
-          projectId: r.projectId,
-          groupId: r.groupId,
-          group: group ? { id: group.id, name: group.name } : null,
-          title: r.title,
-          status: r.status,
-          submittedAt: r.submittedAt ?? null,
-          sections: r.sections,
-          updatedAt: r.sections[0]?.updatedAt ?? null,
-        }
-      }))
+      return json(db.reports.filter((r) => r.projectId === Number(m![1])).map((r) => serializeReport(db, r)))
     }
     m = /^\/reports\/projects\/(\d+)\/report-config$/.exec(route)
-    if (m && method === "DELETE") {
-      const owner = requireTeacher(db, init, headers)
-      assertOwnsProject(db, owner, Number(m![1]))
-      const projectId = Number(m![1])
-      db.reportConfigs = db.reportConfigs.filter((c) => c.projectId !== projectId)
-      db.reports = db.reports.filter((r) => r.projectId !== projectId)
-      persist()
-      return ok()
-    }
     if (m && (method === "GET" || method === "POST" || method === "PUT")) {
       const projectId = Number(m![1])
       const viewer = requireUser(db, init, headers)
       if (!canAccessProject(db, viewer, projectId)) return fail(403, "Vous n’avez pas accès à ce projet.")
       let config = db.reportConfigs.find((c) => c.projectId === projectId)
       if (!config && method === "GET") {
-        return json({ isEnabled: false, format: "markdown", deadline: null, instructions: null, sections: [] })
+        return json({ projectId, isEnabled: false, format: "markdown", deadline: null, instructions: null, sections: [] })
       }
       if (!config) {
-        config = { projectId, isEnabled: false, format: "markdown", deadline: new Date(Date.now() + 21 * 86_400_000).toISOString(), sections: [] }
+        config = { projectId, isEnabled: false, format: "markdown", deadline: null, sections: [] }
         db.reportConfigs.push(config)
       }
       if (method === "POST" || method === "PUT") {
         const owner = requireTeacher(db, init, headers)
         assertOwnsProject(db, owner, Number(m![1]))
+        if (Array.isArray(body.sections) && body.sections.some((s: any) => !String(s.title ?? "").trim())) {
+          return fail(400, "Titre de section requis")
+        }
         if (body.isEnabled !== undefined) config.isEnabled = Boolean(body.isEnabled)
         if (body.format) config.format = body.format
-        if (body.deadline !== undefined) config.deadline = body.deadline
+        if (body.deadline !== undefined) config.deadline = body.deadline || null
         if (body.instructions !== undefined) config.instructions = body.instructions
         if (Array.isArray(body.sections)) {
           config.sections = body.sections.map((s: any, i: number) => ({
             id: Number(s.id) || nextId(db),
-            title: String(s.title ?? `Section ${i + 1}`),
+            title: String(s.title).trim(),
             description: s.description ?? "",
             required: Boolean(s.required),
             wordLimit: s.wordLimit ? Number(s.wordLimit) : undefined,
-            order: Number(s.order) || i + 1,
+            order: i + 1,
           }))
+          // Comme l’API : une section retirée de la liste disparaît avec les textes déjà rédigés.
+          const kept = new Set(config.sections.map((sec) => sec.id))
+          for (const report of db.reports) {
+            if (report.projectId === projectId) report.sections = report.sections.filter((sec) => kept.has(sec.sectionConfigId))
+          }
         }
         persist()
       }
-      return json(config)
+      return json({
+        ...config,
+        id: config.projectId,
+        deadline: config.deadline ?? null,
+        instructions: config.instructions ?? null,
+        sections: [...config.sections].sort((a, b) => a.order - b.order).map((sec) => ({ ...sec, wordLimit: sec.wordLimit ?? null })),
+      })
     }
     m = /^\/reports\/section-config\/(\d+)$/.exec(route)
-    if (m && method === "DELETE") {
-      requireTeacher(db, init, headers)
-      const sectionId = Number(m![1])
-      const config = db.reportConfigs.find((c) => c.sections.some((sec) => sec.id === sectionId))
-      if (!config) return fail(404, "Section introuvable.")
-      config.sections = config.sections.filter((sec) => sec.id !== sectionId)
-      for (const report of db.reports) {
-        if (report.projectId === config.projectId) {
-          report.sections = report.sections.filter((sec) => sec.sectionConfigId !== sectionId)
-        }
-      }
-      persist()
-      return ok()
-    }
     if (m && (method === "PUT" || method === "PATCH")) {
       requireTeacher(db, init, headers)
       const config = db.reportConfigs.find((c) => c.sections.some((s) => s.id === Number(m![1])))
@@ -1270,15 +1252,7 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       }
       const report = db.reports.find((r) => r.groupId === groupId && r.projectId === Number(m![2]))
       if (!report) return fail(404, "Aucun rapport pour ce groupe.")
-      return json({
-        id: report.id,
-        projectId: report.projectId,
-        groupId: report.groupId,
-        title: report.title,
-        status: report.status,
-        submittedAt: report.submittedAt ?? null,
-        sections: report.sections,
-      })
+      return json(serializeReport(db, report))
     }
     m = /^\/reports\/groups\/(\d+)\/projects\/(\d+)\/submit$/.exec(route)
     if (m && method === "POST") {
@@ -1286,7 +1260,16 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       const group = db.groups.find((g) => g.id === Number(m![1]) && g.projectId === Number(m![2]))
       if (!group?.memberIds.includes(student.id)) return fail(403, "Soumission autorisée uniquement pour votre groupe.")
       const report = findOrCreateReport(db, group)
-      if (report.status === "submitted") return fail(409, "Le rapport a déjà été soumis.")
+      if (report.status === "submitted") return fail(409, "Le rapport a déjà été rendu")
+      const config = db.reportConfigs.find((c) => c.projectId === group.projectId)
+      if (!config?.isEnabled) return fail(403, "Le rapport n’est pas ouvert pour ce projet")
+      if (config.deadline && new Date(config.deadline).getTime() < Date.now()) {
+        return fail(403, "La date limite est dépassée : le rapport ne peut plus être rendu")
+      }
+      const missing = config.sections.filter(
+        (sec) => sec.required && !report.sections.some((item) => item.sectionConfigId === sec.id && htmlText(item.content) !== ""),
+      )
+      if (missing.length > 0) return fail(400, `Sections obligatoires non remplies : ${missing.map((sec) => sec.title).join(", ")}`)
       report.status = "submitted"
       report.submittedAt = new Date().toISOString()
       persist()
@@ -1298,15 +1281,30 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       const sectionConfigId = Number(m![1])
       const group = db.groups.find((g) => g.id === Number(body.groupId))
       if (!group?.memberIds.includes(student.id)) return fail(403, "Modification autorisée uniquement pour votre groupe.")
+      const config = db.reportConfigs.find((c) => c.projectId === group.projectId && c.sections.some((sec) => sec.id === sectionConfigId))
+      if (!config) return fail(404, "Section introuvable")
+      if (!config.isEnabled) return fail(403, "Le rapport n’est pas ouvert pour ce projet")
+      if (config.deadline && new Date(config.deadline).getTime() < Date.now()) {
+        return fail(403, "La date limite est dépassée : le rapport est en lecture seule")
+      }
       const report = findOrCreateReport(db, group)
-      if (report.status === "submitted") return fail(403, "Le rapport a été soumis : il n’est plus modifiable.")
+      if (report.status === "submitted") return fail(403, "Le rapport a déjà été rendu")
+      const content = String(body.content ?? "")
       let section = report.sections.find((s) => s.sectionConfigId === sectionConfigId)
+      // Comme l’API : on ne remplace pas le texte d’un coéquipier enregistré depuis la version que l’étudiant a sous les yeux.
+      if (section && body.baseUpdatedAt !== undefined && section.content !== content && section.updatedBy?.id !== student.id) {
+        const seen = body.baseUpdatedAt ? new Date(body.baseUpdatedAt).getTime() : null
+        if (seen !== new Date(section.updatedAt).getTime()) {
+          return fail(409, "Un autre membre du groupe a enregistré une version plus récente de cette section")
+        }
+      }
       if (!section) {
         section = { sectionConfigId, content: "", updatedAt: "" }
         report.sections.push(section)
       }
-      section.content = String(body.content ?? "")
+      section.content = content
       section.updatedAt = new Date().toISOString()
+      section.updatedBy = { id: student.id, firstName: student.firstName, lastName: student.lastName }
       persist()
       return json(section)
     }
