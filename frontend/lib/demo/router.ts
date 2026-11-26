@@ -6,7 +6,7 @@ import { DEMO_ACCOUNTS } from "./mode"
 import { loadDemoDb, nextId, persist } from "./store"
 import { serializeSession, serializeGrid, serializeGroup, serializeProjectDetail, serializeProjectSummary, serializeReport, serializeSubmission, serializeUser } from "./serialize"
 import { parseCsv, parseJson } from "../student-import"
-import type { DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoPromotion, DemoReport, DemoSession, DemoUser } from "./types"
+import type { DemoCriterion, DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoPromotion, DemoReport, DemoSession, DemoUser } from "./types"
 
 export class DemoApiError {
   status: number
@@ -229,15 +229,26 @@ function upsertSession(db: DemoDb, teacher: DemoUser, payload: any): DemoSession
     score: Number(e.score) || 0,
     comment: e.comment ?? "",
   }))
+  for (const entry of entries) {
+    const criterion = grid.criteria.find((c) => c.id === entry.criterionId)
+    if (!criterion) throw new DemoApiError(400, "Un critère n’appartient pas à cette grille")
+    if (entry.score > criterion.maxScore) throw new DemoApiError(400, `La note du critère « ${criterion.name} » dépasse ${criterion.maxScore}`)
+  }
   const status = payload.status === "validated" ? "validated" : payload.status === "submitted" ? "submitted" : "draft"
+  if (status === "validated") assertReadyToValidate(grid.criteria, entries)
+  const now = new Date().toISOString()
+  const totalScore = weightedTotal(db, grid.id, entries)
 
   if (existing) {
     existing.entries = entries
     existing.globalComment = payload.globalComment ?? existing.globalComment
-    existing.totalScore = Number(payload.totalScore) || weightedTotal(db, grid.id, entries)
+    existing.totalScore = totalScore
     existing.status = status
     existing.gradedBy = teacher.id
-    if (status === "validated") existing.validatedAt = new Date().toISOString()
+    existing.gradedAt = now
+    // Rouvrir une note (la repasser en brouillon) la retire aussi de la vue des étudiants.
+    existing.validatedAt = status === "validated" ? existing.validatedAt ?? now : undefined
+    existing.publishedAt = status === "validated" ? existing.publishedAt : undefined
     persist()
     return existing
   }
@@ -248,63 +259,76 @@ function upsertSession(db: DemoDb, teacher: DemoUser, payload: any): DemoSession
     groupId,
     entries,
     globalComment: payload.globalComment ?? "",
-    totalScore: Number(payload.totalScore) || weightedTotal(db, grid.id, entries),
+    totalScore,
     status,
     gradedBy: teacher.id,
-    gradedAt: new Date().toISOString(),
-    submittedAt: status === "draft" ? undefined : new Date().toISOString(),
-    validatedAt: status === "validated" ? new Date().toISOString() : undefined,
+    gradedAt: now,
+    submittedAt: status === "draft" ? undefined : now,
+    validatedAt: status === "validated" ? now : undefined,
   }
   db.sessions.push(session)
   persist()
   return session
 }
 
+/** Une note ne peut être validée que complète : chaque critère noté, et un commentaire là où il est attendu. */
+function assertReadyToValidate(criteria: DemoCriterion[], entries: Array<{ criterionId: number; comment: string }>) {
+  const missing = criteria.filter((c) => !entries.some((e) => e.criterionId === c.id))
+  if (missing.length > 0) {
+    throw new DemoApiError(400, `Il reste ${missing.length} critère${missing.length > 1 ? "s" : ""} sans note : ${missing.map((c) => `« ${c.name} »`).join(", ")}`)
+  }
+  const uncommented = criteria.filter((c) => c.hasComments && !entries.find((e) => e.criterionId === c.id)?.comment.trim())
+  if (uncommented.length > 0) throw new DemoApiError(400, `Un commentaire est attendu pour : ${uncommented.map((c) => `« ${c.name} »`).join(", ")}`)
+}
+
+/** Modifier ou retirer un critère change le total des notes déjà saisies : on les recalcule. */
+function recomputeTotals(db: DemoDb, gridId: number) {
+  for (const session of db.sessions.filter((s) => s.gridId === gridId)) session.totalScore = weightedTotal(db, gridId, session.entries)
+}
+
+const isPublished = (session: DemoSession) => session.status === "validated" && Boolean(session.publishedAt)
+
+/** Note moyenne pondérée par le poids de chaque grille ; à poids tous nuls, chaque grille compte autant. */
+function weightedFinal(items: Array<{ score: number; weight: number }>): number | null {
+  if (items.length === 0) return null
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0)
+  const value = totalWeight > 0 ? items.reduce((sum, item) => sum + item.score * item.weight, 0) / totalWeight : items.reduce((sum, item) => sum + item.score, 0) / items.length
+  return Math.round(value * 100) / 100
+}
+
 function buildSummary(db: DemoDb, projectId: number) {
   const grids = db.grids.filter((g) => g.projectId === projectId)
   const groups = db.groups.filter((g) => g.projectId === projectId)
+  const project = db.projects.find((p) => p.id === projectId)
 
   const groupRows = groups.map((group) => {
-    const grades = grids
-      .map((grid) => {
-        const session = db.sessions.find((s) => s.gridId === grid.id && s.groupId === group.id)
-        if (!session) return null
-        return {
-          id: session.id,
-          gridId: grid.id,
-          gridName: grid.name,
-          totalScore: session.totalScore,
-          isValidated: session.status === "validated",
-        }
-      })
-      .filter((g): g is NonNullable<typeof g> => g !== null)
-
-    let weighted = 0
-    let totalWeight = 0
-    for (const grade of grades) {
-      const grid = grids.find((g) => g.id === grade.gridId)
-      if (grid) {
-        weighted += grade.totalScore * grid.weight
-        totalWeight += grid.weight
-      }
-    }
+    const sessions = grids.flatMap((grid) => {
+      const session = db.sessions.find((s) => s.gridId === grid.id && s.groupId === group.id)
+      return session ? [{ grid, session }] : []
+    })
     return {
       id: group.id,
       name: group.name,
-      grades,
-      finalGrade: totalWeight > 0 ? Math.round((weighted / totalWeight) * 100) / 100 : 0,
+      members: group.memberIds.map((id) => serializeUser(db, id)),
+      grades: sessions.map(({ grid, session }) => ({
+        id: session.id,
+        gridId: grid.id,
+        gridName: grid.name,
+        totalScore: session.totalScore,
+        status: session.status,
+        isValidated: session.status === "validated",
+        isPublished: isPublished(session),
+      })),
+      finalGrade: weightedFinal(
+        sessions.filter(({ session }) => session.status === "validated").map(({ grid, session }) => ({ score: session.totalScore, weight: grid.weight })),
+      ),
     }
   })
 
-  const allValidated =
-    groups.length > 0 &&
-    groupRows.every((g) => g.grades.length === grids.length && g.grades.every((gr) => gr.isValidated))
-
   return {
-    gradingGrids: grids.map((g) => ({ id: g.id, name: g.name, type: g.type, weight: g.weight })),
-    grids: grids.map((g) => ({ id: g.id, name: g.name, type: g.type, weight: g.weight })),
+    project: { id: projectId, name: project?.name ?? "" },
+    gradingGrids: grids.map((g) => ({ id: g.id, name: g.name, type: g.type, weight: g.weight, deliverableId: g.deliverableId ?? null })),
     groups: groupRows,
-    allValidated,
   }
 }
 
@@ -312,7 +336,7 @@ function myGrades(db: DemoDb, user: DemoUser) {
   const myGroups = db.groups.filter((g) => g.memberIds.includes(user.id))
   const rows: Array<Record<string, unknown>> = []
   for (const session of db.sessions) {
-    if (session.status !== "validated") continue
+    if (!isPublished(session)) continue
     if (!myGroups.some((g) => g.id === session.groupId)) continue
     const grid = db.grids.find((g) => g.id === session.gridId)
     const group = db.groups.find((g) => g.id === session.groupId)
@@ -324,12 +348,13 @@ function myGrades(db: DemoDb, user: DemoUser) {
       projectName: project.name,
       groupId: group?.id,
       groupName: group?.name,
+      gridId: grid.id,
       type: grid.type,
       title: grid.name,
       grade: session.totalScore,
       maxGrade: 20,
       feedback: session.globalComment || null,
-      gradedAt: session.validatedAt ?? session.gradedAt,
+      gradedAt: session.publishedAt,
       criteria: session.entries.map((e) => {
         const criterion = grid.criteria.find((c) => c.id === e.criterionId)
         return {
@@ -342,7 +367,42 @@ function myGrades(db: DemoDb, user: DemoUser) {
       }),
     })
   }
-  return rows
+  return rows.sort((a, b) => String(b.gradedAt).localeCompare(String(a.gradedAt)))
+}
+
+/** Avancement vu par l’étudiant : évaluations publiées ou pas encore, sans rien révéler des notes non publiées. */
+function myOverview(db: DemoDb, user: DemoUser) {
+  return db.groups
+    .filter((group) => group.memberIds.includes(user.id))
+    .flatMap((group) => {
+      const project = db.projects.find((p) => p.id === group.projectId)
+      const grids = db.grids.filter((g) => g.projectId === group.projectId)
+      if (!project || project.status !== "visible" || grids.length === 0) return []
+      const totalWeight = grids.reduce((sum, grid) => sum + grid.weight, 0)
+      const evaluations = grids.map((grid) => {
+        const session = db.sessions.find((s) => s.gridId === grid.id && s.groupId === group.id && isPublished(s))
+        return {
+          gridId: grid.id,
+          title: grid.name,
+          type: grid.type,
+          share: totalWeight > 0 ? grid.weight / totalWeight : 1 / grids.length,
+          published: Boolean(session),
+          grade: session ? session.totalScore : null,
+        }
+      })
+      const published = evaluations.flatMap((item) => (item.grade === null ? [] : [{ score: item.grade, weight: item.share }]))
+      return [
+        {
+          projectId: project.id,
+          projectName: project.name,
+          groupId: group.id,
+          groupName: group.name,
+          finalGrade: weightedFinal(published),
+          complete: published.length === evaluations.length,
+          evaluations,
+        },
+      ]
+    })
 }
 
 const isValidYear = (year: unknown) => Number.isInteger(Number(year)) && Number(year) >= 2000 && Number(year) <= 2100
@@ -994,12 +1054,15 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
 
     if (route === "/grading/grids" && method === "POST") {
       assertOwnsProject(db, requireTeacher(db, init, headers), Number(body.projectId))
+      if (body.deliverableId && !db.deliverables.some((d) => d.id === Number(body.deliverableId) && d.projectId === Number(body.projectId))) {
+        return fail(400, "Ce livrable n’appartient pas au projet")
+      }
       const grid = {
         id: nextId(db),
         projectId: Number(body.projectId),
         name: String(body.name ?? "Nouvelle grille"),
         type: (body.type ?? "deliverable") as "deliverable" | "report" | "defense",
-        weight: Number(body.weight) || 1,
+        weight: body.weight === undefined ? 1 : Number(body.weight),
         description: body.description,
         deliverableId: body.deliverableId ? Number(body.deliverableId) : undefined,
         criteria: [],
@@ -1052,7 +1115,7 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
         maxScore: Number(body.maxScore) || 20,
         weight: Number(body.weight) || 1,
         type: (body.type ?? "group") as "group" | "individual",
-        hasComments: body.hasComments ?? true,
+        hasComments: Boolean(body.hasComments),
       }
       grid.criteria.push(criterion)
       persist()
@@ -1068,6 +1131,8 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       if (body.description !== undefined) criterion.description = body.description
       if (body.maxScore !== undefined) criterion.maxScore = Number(body.maxScore)
       if (body.weight !== undefined) criterion.weight = Number(body.weight)
+      if (body.hasComments !== undefined) criterion.hasComments = Boolean(body.hasComments)
+      if (grid) recomputeTotals(db, grid.id)
       persist()
       return json(criterion)
     }
@@ -1079,6 +1144,7 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       db.sessions.forEach((s) => {
         s.entries = s.entries.filter((e) => e.criterionId !== Number(m![1]))
       })
+      recomputeTotals(db, grid.id)
       persist()
       return json({ success: true })
     }
@@ -1095,7 +1161,7 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       if (type) sessions = sessions.filter((s) => db.grids.some((g) => g.id === s.gridId && g.type === type))
       if (user.role === "student") {
         const myGroups = db.groups.filter((g) => g.memberIds.includes(user.id))
-        sessions = sessions.filter((s) => myGroups.some((g) => g.id === s.groupId) && s.status === "validated")
+        sessions = sessions.filter((s) => myGroups.some((g) => g.id === s.groupId) && isPublished(s))
       }
       return json(sessions.map((s) => serializeSession(s)))
     }
@@ -1114,6 +1180,9 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
     if (m && method === "GET") {
       const student = requireStudent(db, init, headers)
       return json(myGrades(db, student))
+    }
+    if (route === "/grading/students/my-summary" && method === "GET") {
+      return json(myOverview(db, requireStudent(db, init, headers)))
     }
     m = /^\/grading\/projects\/(\d+)\/summary$/.exec(route)
     if (m && method === "GET") {
@@ -1157,22 +1226,22 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
         headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="notes-export-demo.csv"' },
       })
     }
-    if (route === "/grading/grades/validate" && method === "POST") {
-      requireTeacher(db, init, headers)
+    if (route === "/grading/grades/publish" && method === "POST") {
+      const owner = requireTeacher(db, init, headers)
       const projectId = Number(body.projectId)
-      const grids = db.grids.filter((g) => g.projectId === projectId)
-      const groups = db.groups.filter((g) => g.projectId === projectId)
-      for (const grid of grids) {
-        for (const group of groups) {
-          const session = db.sessions.find((s) => s.gridId === grid.id && s.groupId === group.id)
-          if (session && session.status !== "validated") {
-            session.status = "validated"
-            session.validatedAt = new Date().toISOString()
-          }
-        }
+      assertOwnsProject(db, owner, projectId)
+      const grids = db.grids.filter((g) => g.projectId === projectId && (!body.gridId || g.id === Number(body.gridId)))
+      const groups = db.groups.filter((g) => g.projectId === projectId && (!body.groupId || g.id === Number(body.groupId)))
+      const now = new Date().toISOString()
+      let published = 0
+      for (const session of db.sessions) {
+        if (session.status !== "validated" || session.publishedAt) continue
+        if (!grids.some((g) => g.id === session.gridId) || !groups.some((g) => g.id === session.groupId)) continue
+        session.publishedAt = now
+        published += 1
       }
       persist()
-      return json({ success: true })
+      return json({ published })
     }
 
     m = /^\/reports\/projects\/(\d+)$/.exec(route)

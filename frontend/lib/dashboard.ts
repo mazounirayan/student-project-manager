@@ -46,6 +46,8 @@ interface Session {
   gridId: number
   groupId: number
   status: SessionStatus
+  /** Renseignée quand la note validée est publiée aux étudiants. */
+  publishedAt?: string | null
 }
 interface ReportConfig {
   isEnabled: boolean
@@ -112,6 +114,7 @@ async function loadProjects(): Promise<ProjectOverview[]> {
 
 export interface GradingTask {
   key: string
+  projectId: number
   projectName: string
   gridName: string
   type: GridType
@@ -171,10 +174,11 @@ export function buildTeacherOverview(projects: ProjectOverview[], sessions: Sess
       const mine = sessions.filter((s) => s.gridId === grid.id)
       const done = new Set(mine.filter((s) => s.status !== "draft").map((s) => s.groupId))
       const toGrade = [...readyGroupIds(project, grid.type, now)].filter((id) => !done.has(id)).length
-      const toPublish = mine.filter((s) => s.status === "submitted").length
+      const toPublish = mine.filter((s) => s.status === "validated" && !s.publishedAt).length
       if (toGrade + toPublish > 0) {
         gradingTasks.push({
           key: `${project.id}-${grid.id}`,
+          projectId: project.id,
           projectName: project.name,
           gridName: grid.name,
           type: grid.type,

@@ -22,8 +22,9 @@ interface SubmissionListProps {
   /** N’affiche que les groupes dont le rendu demande un regard. */
   onlyAttention?: boolean
   onOpen: (row: GroupRow) => void
-  /** Ouvre la notation sans quitter la page (onglet du projet) ou, à défaut, l’adresse de la notation. */
-  onGrade?: () => void
+  /** Ouvre la notation de ce groupe sans quitter la page (onglet du projet) ou, à défaut, via l’adresse de la notation. */
+  onGrade?: (groupId: number) => void
+  /** Adresse de la notation du livrable ; l’identifiant du groupe y est ajouté. */
   gradeHref?: string
 }
 
@@ -74,14 +75,14 @@ export function SubmissionList({ deliverable, groups, onlyAttention = false, onO
                 </Button>
               )}
               {onGrade ? (
-                <Button size="sm" variant={submission ? "default" : "outline"} onClick={onGrade}>
+                <Button size="sm" variant={submission ? "default" : "outline"} onClick={() => onGrade(group.id)}>
                   Noter
                   <span className="sr-only"> {group.name}</span>
                 </Button>
               ) : (
                 gradeHref && (
                   <Button size="sm" variant={submission ? "default" : "outline"} asChild>
-                    <Link href={gradeHref}>
+                    <Link href={`${gradeHref}/${group.id}`}>
                       Noter
                       <span className="sr-only"> {group.name}</span>
                     </Link>

@@ -174,7 +174,7 @@ export function DeliverableGroupDetails({ deliverable, group, submission, onClos
         ) : (
           gradeHref && (
             <Button asChild>
-              <Link href={gradeHref}>Noter ce livrable</Link>
+              <Link href={`${gradeHref}/${group.id}`}>Noter ce livrable</Link>
             </Button>
           )
         )}

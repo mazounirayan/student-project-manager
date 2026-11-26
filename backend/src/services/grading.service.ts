@@ -34,6 +34,11 @@ export interface SessionInput {
   status?: GradeStatus;
 }
 
+export interface PublicationScope {
+  groupId?: number;
+  gridId?: number;
+}
+
 export interface SessionFilters {
   gridId?: number;
   groupId?: number;
@@ -51,6 +56,16 @@ const grades = () => AppDataSource.getRepository(Grade);
 
 const round = (value: number) => Math.round(value * 100) / 100;
 
+/** Note moyenne pondérée par le poids de chaque grille ; à poids tous nuls, chaque grille compte autant. */
+export function weightedFinalGrade(items: { score: number; weight: number }[]): number | null {
+  if (items.length === 0) return null;
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
+  if (totalWeight <= 0) return round(items.reduce((sum, item) => sum + item.score, 0) / items.length);
+  return round(items.reduce((sum, item) => sum + item.score * item.weight, 0) / totalWeight);
+}
+
+const isPublished = (grade: Grade) => grade.status === 'validated' && Boolean(grade.publishedAt);
+
 /** Note sur 20 : moyenne des critères notés, pondérée par le poids de chaque critère. */
 export function computeTotalScore(gridCriteria: GradingCriterion[], entries: { criterionId: number; score: number }[]): number {
   let weighted = 0;
@@ -58,7 +73,7 @@ export function computeTotalScore(gridCriteria: GradingCriterion[], entries: { c
   for (const entry of entries) {
     const criterion = gridCriteria.find(item => item.id === entry.criterionId);
     if (!criterion) continue;
-    weighted += (entry.score / criterion.maxScore) * MAX_GRADE * criterion.weight;
+    weighted += (Math.min(entry.score, criterion.maxScore) / criterion.maxScore) * MAX_GRADE * criterion.weight;
     totalWeight += criterion.weight;
   }
   return totalWeight > 0 ? round(weighted / totalWeight) : 0;
@@ -104,11 +119,15 @@ export class GradingService {
   async updateCriterion(id: number, teacherId: number, data: CriterionInput) {
     const criterion = await this.findOwnedCriterion(id, teacherId);
     Object.assign(criterion, pick(data, CRITERION_FIELDS));
-    return serializeCriterion(await criteria().save(criterion));
+    const saved = await criteria().save(criterion);
+    await this.recomputeTotals(criterion.gradingGrid.id);
+    return serializeCriterion(saved);
   }
 
   async deleteCriterion(id: number, teacherId: number): Promise<void> {
-    await criteria().remove(await this.findOwnedCriterion(id, teacherId));
+    const criterion = await this.findOwnedCriterion(id, teacherId);
+    await criteria().remove(criterion);
+    await this.recomputeTotals(criterion.gradingGrid.id);
   }
 
   // ----- Saisie des notes (enseignant) -----
@@ -135,16 +154,26 @@ export class GradingService {
     return this.saveSession(grade, grid, teacherId, input);
   }
 
-  /** Publie toutes les notes du projet : elles deviennent visibles des étudiants. */
-  async validateProjectGrades(projectId: number, teacherId: number): Promise<void> {
+  /**
+   * Publie les notes validées du projet (ou d'un groupe, ou d'une grille) : elles deviennent visibles des
+   * étudiants. Les brouillons ne sont jamais publiés.
+   */
+  async publishGrades(projectId: number, teacherId: number, scope: PublicationScope = {}): Promise<{ published: number }> {
     await findOwnedProject(projectId, teacherId);
-    const pending = await grades().find({ where: { gradingGrid: { project: { id: projectId } } } });
+    const candidates = await grades().find({
+      where: {
+        gradingGrid: { project: { id: projectId }, ...(scope.gridId && { id: scope.gridId }) },
+        ...(scope.groupId && { group: { id: scope.groupId } }),
+        status: 'validated' as const,
+      },
+    });
     const now = new Date();
-    await grades().save(pending.filter(grade => grade.status !== 'validated').map(grade => {
-      grade.status = 'validated';
-      grade.validatedAt = now;
+    const toPublish = candidates.filter(grade => !grade.publishedAt);
+    await grades().save(toPublish.map(grade => {
+      grade.publishedAt = now;
       return grade;
     }));
+    return { published: toPublish.length };
   }
 
   async updateWeights(projectId: number, teacherId: number, weights: { id?: number; gridId?: number; weight: number }[]): Promise<void> {
@@ -164,7 +193,7 @@ export class GradingService {
 
   /**
    * Notations visibles par l'utilisateur : celles de ses projets pour un enseignant,
-   * uniquement les notes validées de ses propres groupes pour un étudiant.
+   * uniquement les notes publiées de ses propres groupes pour un étudiant.
    */
   async listSessions(actor: Actor, filters: SessionFilters) {
     const isStudent = actor.role === 'student';
@@ -191,29 +220,30 @@ export class GradingService {
       relations: ['gradingGrid', 'group', 'criterionGrades', 'criterionGrades.criterion', 'gradedBy'],
       order: { id: 'ASC' },
     });
-    return found.map(serializeSession);
+    return found.filter(grade => !isStudent || isPublished(grade)).map(serializeSession);
   }
 
-  /** Notes validées des groupes de l'étudiant, avec le détail des critères. */
+  /** Notes publiées des groupes de l'étudiant, avec le détail des critères. */
   async getStudentGrades(studentId: number) {
     const found = await grades().find({
       where: { status: 'validated', group: { members: { id: studentId } } },
       relations: ['gradingGrid', 'gradingGrid.project', 'gradingGrid.criteria', 'group', 'criterionGrades', 'criterionGrades.criterion'],
-      order: { validatedAt: 'DESC' },
+      order: { publishedAt: 'DESC' },
     });
 
-    return found.map(grade => ({
+    return found.filter(isPublished).map(grade => ({
       id: grade.id,
       projectId: grade.gradingGrid.project.id,
       projectName: grade.gradingGrid.project.name,
       groupId: grade.group.id,
       groupName: grade.group.name,
+      gridId: grade.gradingGrid.id,
       type: grade.gradingGrid.type,
       title: grade.gradingGrid.name,
       grade: grade.totalScore ?? 0,
       maxGrade: MAX_GRADE,
       feedback: grade.globalComments || null,
-      gradedAt: grade.validatedAt ?? grade.updatedAt,
+      gradedAt: grade.publishedAt,
       criteria: grade.criterionGrades.map(entry => ({
         name: entry.criterion.name,
         score: entry.score,
@@ -224,6 +254,57 @@ export class GradingService {
     }));
   }
 
+  /**
+   * Avancement de la notation vu par l'étudiant, projet par projet : évaluations publiées ou pas encore,
+   * part de chacune dans la note finale et note finale calculée sur les seules notes publiées.
+   * Ne révèle rien des brouillons ni des notes validées mais non publiées.
+   */
+  async getStudentOverview(studentId: number) {
+    const studentGroups = await AppDataSource.getRepository(Group).find({
+      where: { members: { id: studentId } },
+      relations: ['project'],
+    });
+
+    const rows = [];
+    for (const group of studentGroups) {
+      if (group.project.status !== 'visible') continue;
+      const [projectGrids, groupGrades] = await Promise.all([
+        grids().find({ where: { project: { id: group.project.id } }, order: { createdAt: 'ASC' } }),
+        grades().find({ where: { group: { id: group.id }, status: 'validated' }, relations: ['gradingGrid'] }),
+      ]);
+      if (projectGrids.length === 0) continue;
+
+      const totalWeight = projectGrids.reduce((sum, grid) => sum + grid.weight, 0);
+      const evaluations = projectGrids.map(grid => {
+        const published = groupGrades.find(grade => grade.gradingGrid.id === grid.id && isPublished(grade));
+        return {
+          gridId: grid.id,
+          title: grid.name,
+          type: grid.type,
+          share: totalWeight > 0 ? grid.weight / totalWeight : 1 / projectGrids.length,
+          published: Boolean(published),
+          grade: published ? published.totalScore ?? 0 : null,
+        };
+      });
+      const publishedItems = evaluations.flatMap(item => item.grade === null ? [] : [{ score: item.grade, weight: item.share }]);
+
+      rows.push({
+        projectId: group.project.id,
+        projectName: group.project.name,
+        groupId: group.id,
+        groupName: group.name,
+        finalGrade: weightedFinalGrade(publishedItems),
+        complete: publishedItems.length === evaluations.length,
+        evaluations,
+      });
+    }
+    return rows;
+  }
+
+  /**
+   * Suivi de la notation d'un projet : une ligne par groupe, une note par grille. La note finale ne retient que
+   * les notes validées (ou publiées) : un brouillon n'entre pas dans le calcul.
+   */
   async getProjectSummary(projectId: number, teacherId: number) {
     const project = await findOwnedProject(projectId, teacherId);
     const [projectGrids, groups, projectGrades] = await Promise.all([
@@ -232,11 +313,14 @@ export class GradingService {
       grades().find({ where: { gradingGrid: { project: { id: projectId } } }, relations: ['gradingGrid', 'group'] }),
     ]);
 
-    const gridSummaries = projectGrids.map(grid => ({ id: grid.id, name: grid.name, type: grid.type, weight: grid.weight }));
+    const gridSummaries = projectGrids.map(grid => ({
+      id: grid.id, name: grid.name, type: grid.type, weight: grid.weight, deliverableId: grid.deliverableId ?? null,
+    }));
     const groupRows = groups.map(group => {
       const groupGrades = projectGrades.filter(grade => grade.group.id === group.id);
-      const totalWeight = groupGrades.reduce((sum, grade) => sum + grade.gradingGrid.weight, 0);
-      const weighted = groupGrades.reduce((sum, grade) => sum + (grade.totalScore ?? 0) * grade.gradingGrid.weight, 0);
+      const final = weightedFinalGrade(groupGrades
+        .filter(grade => grade.status === 'validated')
+        .map(grade => ({ score: grade.totalScore ?? 0, weight: grade.gradingGrid.weight })));
       return {
         id: group.id,
         name: group.name,
@@ -246,23 +330,18 @@ export class GradingService {
           gridId: grade.gradingGrid.id,
           gridName: grade.gradingGrid.name,
           totalScore: grade.totalScore ?? 0,
+          status: grade.status,
           isValidated: grade.status === 'validated',
+          isPublished: isPublished(grade),
         })),
-        finalGrade: totalWeight > 0 ? round(weighted / totalWeight) : 0,
+        finalGrade: final,
       };
     });
 
-    return {
-      project: { id: project.id, name: project.name },
-      gradingGrids: gridSummaries,
-      grids: gridSummaries,
-      groups: groupRows,
-      allValidated: groupRows.length > 0 && groupRows.every(row =>
-        row.grades.length === gridSummaries.length && row.grades.every(grade => grade.isValidated)),
-    };
+    return { project: { id: project.id, name: project.name }, gradingGrids: gridSummaries, groups: groupRows };
   }
 
-  /** Export CSV (séparateur « ; », BOM UTF-8 pour Excel). */
+  /** Export CSV (séparateur « ; », BOM UTF-8 pour Excel) des notes validées ; un brouillon est signalé comme tel. */
   async exportProjectGrades(projectId: number, teacherId: number): Promise<string> {
     const summary = await this.getProjectSummary(projectId, teacherId);
     const header = ['Groupe', 'Étudiants', ...summary.gradingGrids.map(grid => grid.name), 'Note finale'];
@@ -271,14 +350,26 @@ export class GradingService {
       group.members.map(member => `${member.firstName} ${member.lastName}`).join(', '),
       ...summary.gradingGrids.map(grid => {
         const grade = group.grades.find(item => item.gridId === grid.id);
-        return grade ? grade.totalScore.toFixed(2).replace('.', ',') : 'Non noté';
+        if (!grade) return 'Non noté';
+        return grade.isValidated ? grade.totalScore.toFixed(2).replace('.', ',') : 'Brouillon';
       }),
-      group.finalGrade.toFixed(2).replace('.', ','),
+      group.finalGrade === null ? '' : group.finalGrade.toFixed(2).replace('.', ','),
     ]);
-    return `﻿${[header, ...rows].map(row => row.map(csvCell).join(';')).join('\r\n')}\r\n`;
+    return `\ufeff${[header, ...rows].map(row => row.map(csvCell).join(';')).join('\r\n')}\r\n`;
   }
 
   // ----- Utilitaires -----
+
+  /** Modifier ou retirer un critère change le total des notes déjà saisies : on les recalcule. */
+  private async recomputeTotals(gridId: number) {
+    const grid = await grids().findOne({ where: { id: gridId }, relations: ['criteria'] });
+    if (!grid) return;
+    const saved = await grades().find({ where: { gradingGrid: { id: gridId } }, relations: ['criterionGrades', 'criterionGrades.criterion'] });
+    await grades().save(saved.map(grade => {
+      grade.totalScore = computeTotalScore(grid.criteria, grade.criterionGrades.map(entry => ({ criterionId: entry.criterion.id, score: entry.score })));
+      return grade;
+    }));
+  }
 
   private async saveSession(grade: Grade, grid: GradingGrid, teacherId: number, input: SessionInput) {
     const byCriterion = new Map(grid.criteria.map(criterion => [criterion.id, criterion]));
@@ -291,6 +382,9 @@ export class GradingService {
       seen.add(criterion.id);
     }
 
+    const status = input.status ?? grade.status ?? 'draft';
+    if (status === 'validated') assertReadyToValidate(grid, input.entries);
+
     const previousEntries = new Map((grade.criterionGrades ?? []).map(entry => [entry.criterion.id, entry]));
     grade.criterionGrades = input.entries.map(entry => {
       const criterion = byCriterion.get(Number(entry.criterionId))!;
@@ -298,11 +392,12 @@ export class GradingService {
       return Object.assign(target, { score: Number(entry.score), comments: entry.comment || null, criterion });
     });
 
-    const status = input.status ?? grade.status ?? 'draft';
     grade.totalScore = computeTotalScore(grid.criteria, input.entries.map(entry => ({ criterionId: Number(entry.criterionId), score: Number(entry.score) })));
     grade.globalComments = input.globalComment ?? grade.globalComments ?? null;
     grade.status = status;
     grade.validatedAt = status === 'validated' ? grade.validatedAt ?? new Date() : null;
+    // Rouvrir une note (la repasser en brouillon) la retire aussi de la vue des étudiants.
+    grade.publishedAt = status === 'validated' ? grade.publishedAt ?? null : null;
     grade.gradedBy = { id: teacherId } as Grade['gradedBy'];
 
     const saved = await grades().save(grade);
@@ -331,6 +426,19 @@ export class GradingService {
     if (!deliverableId) return;
     const deliverable = await AppDataSource.getRepository(Deliverable).findOne({ where: { id: deliverableId, project: { id: projectId } } });
     if (!deliverable) throw badRequest("Ce livrable n'appartient pas au projet");
+  }
+}
+
+/** Une note ne peut être validée que complète : chaque critère noté, et un commentaire là où il est attendu. */
+function assertReadyToValidate(grid: GradingGrid, entries: SessionInput['entries']) {
+  const missing = grid.criteria.filter(criterion => !entries.some(entry => Number(entry.criterionId) === criterion.id));
+  if (missing.length > 0) {
+    throw badRequest(`Il reste ${missing.length} critère${missing.length > 1 ? 's' : ''} sans note : ${missing.map(item => `« ${item.name} »`).join(', ')}`);
+  }
+  const uncommented = grid.criteria.filter(criterion => criterion.hasComments
+    && !entries.find(entry => Number(entry.criterionId) === criterion.id)?.comment?.trim());
+  if (uncommented.length > 0) {
+    throw badRequest(`Un commentaire est attendu pour : ${uncommented.map(item => `« ${item.name} »`).join(', ')}`);
   }
 }
 

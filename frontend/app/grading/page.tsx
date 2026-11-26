@@ -1,33 +1,41 @@
 "use client"
 
-import { formatNumber } from "@/lib/format"
+import Link from "next/link"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { ClipboardCheck, Download, FolderOpen, Send } from "lucide-react"
+import { toast } from "sonner"
+import { ProtectedRoute } from "@/components/auth/protected-route"
+import { GradeStateBadge } from "@/components/grading/GradeStateBadge"
 import { MainLayout } from "@/components/layout/main-layout"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { PageContainer, PageHeader } from "@/components/layout/page"
+import { ProjectStatusBadge } from "@/components/projects/project-status-badge"
+import { EmptyState } from "@/components/shared/EmptyState"
+import { ErrorState } from "@/components/shared/ErrorState"
+import { SectionCard } from "@/components/shared/SectionCard"
+import { CardsSkeleton } from "@/components/shared/Skeletons"
+import { StatTile } from "@/components/shared/StatTile"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { BarChart3, CheckCircle2, Download, Save, ShieldCheck } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
-import { ProtectedRoute } from "@/components/auth/protected-route"
+import { apiGet, downloadFile, errorMessage } from "@/lib/api"
+import { gradingHref } from "@/lib/deliverables"
+import { formatNumber, gridTypeLabel, plural } from "@/lib/format"
+import {
+  defenseGradingHref,
+  gridSetupHref,
+  percentOf,
+  progressOf,
+  publishGrades,
+  summaryState,
+  type GradeState,
+  type ProjectSummary,
+  type SummaryGrid,
+  type SummaryGroup,
+} from "@/lib/grading"
+import { reportHash } from "@/lib/reports"
+import { projectPath } from "@/lib/routes"
+import { cn } from "@/lib/utils"
 import { fetchMyProjects, type Project } from "@/services/project.service"
-import { apiGet, apiPost, apiPut, assertOk } from "@/lib/api"
-import { ErrorState } from "@/components/shared/ErrorState"
-import { EmptyState } from "@/components/shared/EmptyState"
-import { CardsSkeleton } from "@/components/shared/Skeletons"
-import { toast } from "sonner"
-
-type SummaryGrade = { id: number; gridId: number; gridName: string; totalScore: number; isValidated: boolean }
-type SummaryGroup = { id: number; name: string; grades: SummaryGrade[]; finalGrade: number }
-type SummaryGrid = { id: number; name: string; type: string; weight: number }
-type Summary = {
-  gradingGrids: SummaryGrid[]
-  grids?: SummaryGrid[]
-  groups: SummaryGroup[]
-  allValidated: boolean
-}
 
 export default function GradingSummaryPage() {
   return (
@@ -37,332 +45,391 @@ export default function GradingSummaryPage() {
   )
 }
 
+type Summaries = Record<number, ProjectSummary | null>
+
+/** Projet à ouvrir en premier : celui de l’adresse (?project=), sinon le premier qui demande encore du travail. */
+function firstProject(projects: Project[], summaries: Summaries): number | null {
+  const wanted = Number(new URLSearchParams(window.location.search).get("project"))
+  if (projects.some((project) => project.id === wanted)) return wanted
+  const busy = projects.find((project) => {
+    const summary = summaries[project.id]
+    if (!summary) return false
+    const progress = progressOf(summary)
+    return progress.none + progress.draft + progress.validated > 0
+  })
+  return (busy ?? projects[0])?.id ?? null
+}
+
 function GradingSummaryPageContent() {
   const [projects, setProjects] = useState<Project[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
-  const [summary, setSummary] = useState<Summary | null>(null)
+  const [summaries, setSummaries] = useState<Summaries>({})
+  const [selectedId, setSelectedId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
-  const [summaryLoading, setSummaryLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [summaryError, setSummaryError] = useState<string | null>(null)
-  const [weights, setWeights] = useState<Map<number, number>>(new Map())
-  const [saving, setSaving] = useState(false)
-  const [publishing, setPublishing] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
 
-  const loadProjects = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const loadSummary = useCallback(async (projectId: number) => {
     try {
-      const data = await fetchMyProjects()
-      const list = Array.isArray(data) ? data : []
-      setProjects(list)
-      if (list.length > 0) setSelectedProjectId(String(list[0].id))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible de charger vos projets.")
-    } finally {
-      setLoading(false)
+      return await apiGet<ProjectSummary>(`/grading/projects/${projectId}/summary`)
+    } catch {
+      return null
     }
   }, [])
 
-  const loadSummary = useCallback(async () => {
-    if (!selectedProjectId) return
-    setSummaryLoading(true)
-    setSummaryError(null)
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     try {
-      const data = await apiGet<Summary>(`/grading/projects/${selectedProjectId}/summary`)
-      setSummary(data)
-      const grids = data.gradingGrids ?? data.grids ?? []
-      const weightsMap = new Map<number, number>()
-      grids.forEach((grid) => weightsMap.set(grid.id, Math.round(grid.weight * 1000) / 10))
-      setWeights(weightsMap)
+      const list = await fetchMyProjects()
+      const loaded = await Promise.all(list.map(async (project) => [project.id, await loadSummary(project.id)] as const))
+      const byProject = Object.fromEntries(loaded)
+      setProjects(list)
+      setSummaries(byProject)
+      setSelectedId((current) => current ?? firstProject(list, byProject))
     } catch (err) {
-      setSummary(null)
-      setSummaryError(err instanceof Error ? err.message : "Impossible de charger la synthèse de notation.")
+      setError(errorMessage(err, "Impossible de charger vos projets."))
     } finally {
-      setSummaryLoading(false)
+      setLoading(false)
     }
-  }, [selectedProjectId])
-
-  useEffect(() => {
-    loadProjects()
-  }, [loadProjects])
-
-  useEffect(() => {
-    loadSummary()
   }, [loadSummary])
 
-  const grids = summary?.gradingGrids ?? summary?.grids ?? []
+  useEffect(() => {
+    void load()
+  }, [load])
 
-  const handleWeightChange = (gridId: number, value: number) => {
-    setWeights((prev) => {
-      const next = new Map(prev)
-      next.set(gridId, value)
-      return next
-    })
+  const refresh = useCallback(
+    async (projectId: number) => {
+      const summary = await loadSummary(projectId)
+      setSummaries((current) => ({ ...current, [projectId]: summary }))
+    },
+    [loadSummary],
+  )
+
+  const select = (projectId: number) => {
+    setSelectedId(projectId)
+    window.history.replaceState(null, "", `?project=${projectId}`)
   }
 
-  const saveWeights = async () => {
-    if (!selectedProjectId) return
-    const total = Array.from(weights.values()).reduce((sum, w) => sum + w, 0)
-    if (Math.abs(total - 100) > 0.01) {
-      toast.error(`La somme des poids doit être 100 % (actuellement ${formatNumber(total, 1)} %).`)
-      return
+  const totals = useMemo(() => {
+    const sum = { todo: 0, toPublish: 0, published: 0, total: 0 }
+    for (const summary of Object.values(summaries)) {
+      if (!summary) continue
+      const progress = progressOf(summary)
+      sum.todo += progress.none + progress.draft
+      sum.toPublish += progress.validated
+      sum.published += progress.published
+      sum.total += progress.total
     }
-    setSaving(true)
+    return sum
+  }, [summaries])
+
+  const project = projects.find((item) => item.id === selectedId)
+  const summary = selectedId === null ? null : summaries[selectedId]
+
+  async function publish(summary: ProjectSummary, group?: SummaryGroup) {
+    const count = group
+      ? summary.gradingGrids.filter((grid) => summaryState(group.grades.find((grade) => grade.gridId === grid.id)) === "validated").length
+      : progressOf(summary).validated
+    const key = group ? `group-${group.id}` : "project"
+    setBusy(key)
     try {
-      await apiPut(`/grading/projects/${selectedProjectId}/weights`, {
-        weights: Array.from(weights.entries()).map(([gridId, weight]) => ({ gridId, weight: weight / 100 })),
+      const published = await publishGrades(summary.project.id, count, {
+        groupId: group?.id,
+        label: group ? `les notes validées de ${group.name}` : count === 1 ? "la note validée du projet" : `les ${count} notes validées du projet`,
       })
-      toast.success("Pondérations sauvegardées.")
-      await loadSummary()
+      if (published === null) return
+      toast.success(`${plural(published, "note publiée", "notes publiées")}.`, {
+        description: "Les étudiants concernés la retrouvent dans « Mes notes ».",
+      })
+      await refresh(summary.project.id)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur lors de la sauvegarde des poids.")
+      toast.error("Les notes n’ont pas été publiées.", { description: errorMessage(err, "Réessayez dans un instant.") })
     } finally {
-      setSaving(false)
+      setBusy(null)
     }
   }
 
-  const publishGrades = async () => {
-    if (!selectedProjectId || !summary) return
-    setPublishing(true)
+  async function exportCsv(projectId: number) {
     try {
-      await apiPost("/grading/grades/validate", { projectId: Number(selectedProjectId) })
-      toast.success("Notes publiées aux étudiants.")
-      await loadSummary()
+      await downloadFile(`/grading/projects/${projectId}/export`, `notes-projet-${projectId}.csv`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur lors de la publication des notes.")
-    } finally {
-      setPublishing(false)
+      toast.error("L’export n’a pas été téléchargé.", { description: errorMessage(err, "Réessayez dans un instant.") })
     }
   }
-
-  const exportCsv = async () => {
-    if (!selectedProjectId) return
-    try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000"}/api/grading/projects/${selectedProjectId}/export`,
-        { headers: { Authorization: `Bearer ${window.localStorage.getItem("token")}` } }
-      )
-      await assertOk(res)
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement("a")
-      link.href = url
-      link.download = `notes-projet-${selectedProjectId}.csv`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      toast.error(err instanceof Error && err.message !== "export indisponible"
-        ? err.message
-        : "L’export des notes n’est pas disponible actuellement.")
-    }
-  }
-
-  const projectName = projects.find((p) => String(p.id) === selectedProjectId)?.name
 
   return (
     <MainLayout>
-      <div className="p-6">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">Évaluations</h1>
-            <p className="text-muted-foreground">Synthèse de notation, pondération et publication des notes</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {projects.length > 0 && (
-              <Select value={selectedProjectId ?? undefined} onValueChange={setSelectedProjectId}>
-                <SelectTrigger className="w-full sm:w-[260px]">
-                  <SelectValue placeholder="Sélectionner un projet" />
-                </SelectTrigger>
-                <SelectContent>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={String(p.id)}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-        </div>
+      <PageContainer>
+        <PageHeader title="Évaluations" description="Ce qu’il reste à noter et à publier, projet par projet. Les notes se saisissent dans la page de chaque projet." />
 
         {loading ? (
-          <CardsSkeleton count={3} />
+          <CardsSkeleton count={2} />
         ) : error ? (
-          <ErrorState message={error} onRetry={loadProjects} />
+          <ErrorState message={error} onRetry={load} />
         ) : projects.length === 0 ? (
           <EmptyState
-            icon={BarChart3}
+            icon={FolderOpen}
             title="Aucun projet pour le moment"
-            description="Créez un projet et des grilles de notation pour visualiser la synthèse ici."
+            description="Créez un projet, ses groupes et ses grilles de notation : le suivi des notes apparaîtra ici."
+            action={
+              <Button asChild>
+                <Link href="/projects">Voir les projets</Link>
+              </Button>
+            }
           />
-        ) : summaryLoading ? (
-          <CardsSkeleton count={2} />
-        ) : summaryError || !summary ? (
-          <ErrorState message={summaryError ?? "Synthèse indisponible."} onRetry={loadSummary} />
         ) : (
-          <>
-            {grids.length === 0 && (
-              <Alert className="mb-6">
-                <BarChart3 aria-hidden="true" className="h-4 w-4" />
-                <AlertDescription>
-                  Aucune grille de notation pour ce projet. Créez des grilles depuis l’onglet « Notation » de la page
-                  projet.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <div className="mb-6 grid gap-4 md:grid-cols-3">
-              <Card>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Groupes évalués</CardTitle>
-                  <BarChart3 aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {summary.groups.filter((g) => g.grades.length > 0).length}/{summary.groups.length}
-                  </div>
-                  <p className="text-xs text-muted-foreground">{projectName ?? ""}</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Notes validées</CardTitle>
-                  <CheckCircle2 aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {summary.groups.reduce((sum, g) => sum + g.grades.filter((gr) => gr.isValidated).length, 0)}
-                  </div>
-                  <p className="text-xs text-muted-foreground">Sur {grids.length * summary.groups.length} attendues</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="flex flex-wrap flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Publication</CardTitle>
-                  <ShieldCheck aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {summary.allValidated ? "Prête" : "En attente"}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {summary.allValidated ? "Toutes les notes sont validées" : "Validez toutes les notes d’abord"}
-                  </p>
-                </CardContent>
-              </Card>
+          <div className="space-y-6">
+            <div className="grid grid-cols-3 gap-3">
+              <StatTile label="À noter" value={totals.todo} hint="à saisir ou à terminer" emphasis={totals.todo > 0} />
+              <StatTile label="À publier" value={totals.toPublish} hint="validées, invisibles des étudiants" emphasis={totals.toPublish > 0} />
+              <StatTile label="Publiées" value={`${totals.published}/${totals.total}`} hint="visibles des étudiants" />
             </div>
 
-            {grids.length > 0 && (
-              <Card className="mb-6">
-                <CardHeader>
-                  <CardTitle>Pondération des grilles</CardTitle>
-                  <CardDescription>Le total doit faire 100 %.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {grids.map((grid) => (
-                    <div key={grid.id} className="flex flex-wrap items-center gap-3">
-                      <span className="min-w-0 flex-1 text-sm font-medium">{grid.name}</span>
-                      <Badge variant="outline">{grid.type === "deliverable" ? "Livrable" : grid.type === "report" ? "Rapport" : "Soutenance"}</Badge>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step="0.1"
-                        className="w-24"
-                        value={weights.get(grid.id) ?? Math.round(grid.weight * 1000) / 10}
-                        onChange={(e) => handleWeightChange(grid.id, Number(e.target.value))}
-                        aria-label={`Poids de la grille ${grid.name} en pourcentage`}
-                      />
-                      <span className="text-sm text-muted-foreground">%</span>
-                    </div>
-                  ))}
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-                    <span className="text-sm text-muted-foreground">
-                      Total : {formatNumber(Array.from(weights.values()).reduce((sum, w) => sum + w, 0), 1)} %
-                    </span>
-                    <Button onClick={saveWeights} disabled={saving}>
-                      <Save aria-hidden="true" className="mr-2 h-4 w-4" />
-                      {saving ? "Sauvegarde…" : "Sauvegarder les poids"}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            <SectionCard title="Projets" description="Choisissez un projet pour voir où en est chaque groupe.">
+              <ul className="divide-y">
+                {projects.map((item) => {
+                  const itemSummary = summaries[item.id]
+                  return (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        onClick={() => select(item.id)}
+                        aria-current={item.id === selectedId ? "true" : undefined}
+                        className={cn(
+                          "-mx-2 flex w-[calc(100%+1rem)] flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-md px-2 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring",
+                          item.id === selectedId && "bg-muted",
+                        )}
+                      >
+                        <span className="min-w-0 flex-[1_1_14rem]">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium">{item.name}</span>
+                            <ProjectStatusBadge status={item.status} />
+                          </span>
+                          <span className="block text-xs text-muted-foreground">{itemSummary ? describeProgress(itemSummary) : "Suivi indisponible"}</span>
+                        </span>
+                        {itemSummary && <ProgressBadges summary={itemSummary} />}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </SectionCard>
 
-            {summary.groups.length === 0 ? (
-              <EmptyState
-                icon={BarChart3}
-                title="Aucun groupe pour ce projet"
-                description="Constituez des groupes depuis la page projet pour évaluer les étudiants."
+            {project && (
+              <ProjectDetail
+                project={project}
+                summary={summary ?? null}
+                busy={busy}
+                onPublish={publish}
+                onExport={() => exportCsv(project.id)}
+                onRetry={() => refresh(project.id)}
               />
-            ) : (
-              <Card>
-                <CardHeader>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <CardTitle>Notes par groupe</CardTitle>
-                      <CardDescription>Note finale pondérée et statut de chaque évaluation</CardDescription>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="outline" onClick={exportCsv}>
-                        <Download aria-hidden="true" className="mr-2 h-4 w-4" />
-                        Exporter (CSV)
-                      </Button>
-                      <Button variant="default" onClick={publishGrades} disabled={publishing || !summary.allValidated}>
-                        <CheckCircle2 aria-hidden="true" className="mr-2 h-4 w-4" />
-                        {publishing ? "Publication…" : "Publier les notes"}
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Groupe</TableHead>
-                        {grids.map((grid) => (
-                          <TableHead key={grid.id} className="text-right">{grid.name}</TableHead>
-                        ))}
-                        <TableHead className="text-right">Note finale</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {summary.groups.map((group) => (
-                        <TableRow key={group.id}>
-                          <TableCell className="font-medium">{group.name}</TableCell>
-                          {grids.map((grid) => {
-                            const grade = group.grades.find((gr) => gr.gridId === grid.id)
-                            return (
-                              <TableCell key={grid.id} className="text-right">
-                                {grade ? (
-                                  <span className="inline-flex items-center gap-2">
-                                    <span className="font-medium">{formatNumber(grade.totalScore, 1)}/20</span>
-                                    <Badge variant={grade.isValidated ? "default" : "secondary"}>
-                                      {grade.isValidated ? "Validée" : "Brouillon"}
-                                    </Badge>
-                                  </span>
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </TableCell>
-                            )
-                          })}
-                          <TableCell className="text-right font-bold">
-                            {formatNumber(group.finalGrade, 2)}/20
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
             )}
-          </>
+          </div>
         )}
-      </div>
+      </PageContainer>
     </MainLayout>
   )
+}
+
+function describeProgress(summary: ProjectSummary): string {
+  if (summary.gradingGrids.length === 0) return "Aucune grille de notation"
+  if (summary.groups.length === 0) return "Aucun groupe à noter"
+  const progress = progressOf(summary)
+  return `${progress.published} note${progress.published > 1 ? "s" : ""} publiée${progress.published > 1 ? "s" : ""} sur ${progress.total}`
+}
+
+function ProgressBadges({ summary }: { summary: ProjectSummary }) {
+  if (summary.gradingGrids.length === 0 || summary.groups.length === 0) return null
+  const progress = progressOf(summary)
+  const todo = progress.none + progress.draft
+  if (todo + progress.validated === 0) return <Badge variant="outline">Tout est publié</Badge>
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      {todo > 0 && <Badge>{todo} à noter</Badge>}
+      {progress.validated > 0 && <Badge variant="secondary">{progress.validated} à publier</Badge>}
+    </span>
+  )
+}
+
+interface ProjectDetailProps {
+  project: Project
+  summary: ProjectSummary | null
+  busy: string | null
+  onPublish: (summary: ProjectSummary, group?: SummaryGroup) => void
+  onExport: () => void
+  onRetry: () => void
+}
+
+function ProjectDetail({ project, summary, busy, onPublish, onExport, onRetry }: ProjectDetailProps) {
+  if (!summary) return <ErrorState message="Le suivi des notes de ce projet n’a pas pu être chargé." onRetry={onRetry} />
+
+  const { gradingGrids: grids, groups } = summary
+  const progress = progressOf(summary)
+
+  return (
+    <section aria-labelledby="project-detail-title" className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="min-w-0 space-y-1">
+          <h2 id="project-detail-title" className="text-lg font-semibold">
+            {project.name}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {plural(groups.length, "groupe")}, {plural(grids.length, "grille")}. La note finale ne compte que les notes validées, pondérées par le poids de chaque grille.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline">
+            <Link href={projectPath("/projects", project.id)}>Ouvrir le projet</Link>
+          </Button>
+          {groups.length > 0 && grids.length > 0 && (
+            <Button variant="outline" onClick={onExport}>
+              <Download aria-hidden="true" />
+              Exporter (CSV)
+            </Button>
+          )}
+          {progress.total > 0 && (
+            <Button onClick={() => onPublish(summary)} disabled={progress.validated === 0 || busy !== null}>
+              <Send aria-hidden="true" />
+              {progress.validated > 0 ? `Publier les notes validées (${progress.validated})` : "Aucune note validée à publier"}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {grids.length === 0 ? (
+        <EmptyState
+          icon={ClipboardCheck}
+          title="Aucune grille de notation pour ce projet"
+          description="Créez une grille par livrable, une pour le rapport et une pour la soutenance : vous pourrez ensuite noter chaque groupe et suivre ici ce qui reste à faire."
+          action={
+            <Button asChild>
+              <Link href={gridSetupHref(project.id)}>Créer une grille</Link>
+            </Button>
+          }
+        />
+      ) : groups.length === 0 ? (
+        <EmptyState
+          icon={ClipboardCheck}
+          title="Aucun groupe à noter"
+          description="Les groupes se constituent dans la page du projet, onglet Groupes."
+          action={
+            <Button asChild variant="outline">
+              <Link href={`${projectPath("/projects", project.id)}#groups`}>Ouvrir les groupes</Link>
+            </Button>
+          }
+        />
+      ) : (
+        <>
+          <div className="overflow-x-auto rounded-xl border bg-card text-card-foreground shadow-sm">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="sticky left-0 z-10 min-w-32 bg-card">Groupe</TableHead>
+                  {grids.map((grid) => (
+                    <TableHead key={grid.id} className="min-w-44 whitespace-normal align-top">
+                      <span className="block font-medium text-foreground">{grid.name}</span>
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        {gridTypeLabel(grid.type)}, {percentOf(weightShare(grids, grid))} de la note finale
+                      </span>
+                    </TableHead>
+                  ))}
+                  <TableHead className="min-w-28 text-right align-top">Note finale</TableHead>
+                  <TableHead className="min-w-36 text-right align-top">Publication</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {groups.map((group) => {
+                  const toPublish = grids.filter((grid) => summaryState(group.grades.find((grade) => grade.gridId === grid.id)) === "validated").length
+                  const published = grids.filter((grid) => summaryState(group.grades.find((grade) => grade.gridId === grid.id)) === "published").length
+                  const validated = group.grades.filter((grade) => grade.isValidated).length
+                  return (
+                    <TableRow key={group.id}>
+                      <TableCell className="sticky left-0 z-10 bg-card font-medium">{group.name}</TableCell>
+                      {grids.map((grid) => {
+                        const grade = group.grades.find((item) => item.gridId === grid.id)
+                        const state = summaryState(grade)
+                        return (
+                          <TableCell key={grid.id}>
+                            <div className="flex flex-col items-start gap-1">
+                              {grade && (
+                                <span className="flex flex-wrap items-center gap-2">
+                                  <span className="tabular-nums">{formatNumber(grade.totalScore, 2)} / 20</span>
+                                  <GradeStateBadge state={state} />
+                                </span>
+                              )}
+                              <Link
+                                href={gradeLink(project.id, grid, group.id)}
+                                className={cn(
+                                  "rounded-sm text-xs font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                                  state === "none" && "text-sm",
+                                )}
+                              >
+                                {ACTION_LABELS[state]}
+                                <span className="sr-only">
+                                  {" "}
+                                  {grid.name} de {group.name}
+                                </span>
+                              </Link>
+                            </div>
+                          </TableCell>
+                        )
+                      })}
+                      <TableCell className="text-right">
+                        {group.finalGrade === null ? (
+                          <span className="text-muted-foreground">–</span>
+                        ) : (
+                          <>
+                            <span className="font-semibold tabular-nums">{formatNumber(group.finalGrade, 2)} / 20</span>
+                            {validated < grids.length && <span className="block text-xs text-muted-foreground">provisoire</span>}
+                          </>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {toPublish > 0 ? (
+                          <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => onPublish(summary, group)}>
+                            Publier {plural(toPublish, "note")}
+                            <span className="sr-only"> de {group.name}</span>
+                          </Button>
+                        ) : published > 0 ? (
+                          <span className="text-sm text-muted-foreground">{published === grids.length ? "Tout est publié" : `${plural(published, "note publiée", "notes publiées")}`}</span>
+                        ) : (
+                          <span className="text-muted-foreground">–</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Brouillon : visible de vous seule. Validée : figée, pas encore visible des étudiants. Publiée : visible des étudiants du groupe.{" "}
+            <Link href={gridSetupHref(project.id)} className="text-primary hover:underline">
+              Modifier les grilles et leur pondération
+            </Link>
+          </p>
+        </>
+      )}
+    </section>
+  )
+}
+
+const ACTION_LABELS: Record<GradeState, string> = { none: "Saisir la note", draft: "Continuer", validated: "Voir la note", published: "Voir la note" }
+
+const weightShare = (grids: SummaryGrid[], grid: SummaryGrid) => {
+  const total = grids.reduce((sum, item) => sum + item.weight, 0)
+  return total > 0 ? grid.weight / total : 1 / grids.length
+}
+
+/** Où l’on saisit cette note : le livrable, le rapport ou la soutenance du groupe, dans la page du projet. */
+function gradeLink(projectId: number, grid: SummaryGrid, groupId: number): string {
+  switch (grid.type) {
+    case "deliverable":
+      return grid.deliverableId ? gradingHref(projectId, grid.deliverableId, groupId) : `${projectPath("/projects", projectId)}#deliverables`
+    case "report":
+      return `${projectPath("/projects", projectId)}${reportHash(groupId)}`
+    case "defense":
+      return defenseGradingHref(projectId, groupId)
+  }
 }

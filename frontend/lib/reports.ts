@@ -55,6 +55,8 @@ export interface ReportGrade {
   groupId: number
   totalScore: number
   status: "draft" | "submitted" | "validated"
+  /** Renseignée quand la note validée a été publiée aux étudiants. */
+  publishedAt?: string | null
 }
 
 // ----- Texte -----

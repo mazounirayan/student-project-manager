@@ -24,7 +24,7 @@ interface DeliverablesListProps {
   /** Recharge le projet après une modification. */
   onChanged: () => Promise<void> | void
   /** Passe à la notation du livrable, plus bas dans la page. */
-  onGrade: (deliverableId: number) => void
+  onGrade: (deliverableId: number, groupId?: number) => void
 }
 
 /** Livrables du projet : consigne et échéance, règles de conformité, rendus par groupe avec leur détail et leur notation. */
@@ -179,7 +179,7 @@ export function DeliverablesList({ groups, deliverables, onEdit, onChanged, onGr
                 deliverable={deliverable}
                 groups={groups}
                 onOpen={(row) => setDetails({ deliverable, row })}
-                onGrade={() => onGrade(deliverable.id)}
+                onGrade={(groupId) => onGrade(deliverable.id, groupId)}
               />
             </section>
           </article>
@@ -194,9 +194,9 @@ export function DeliverablesList({ groups, deliverables, onEdit, onChanged, onGr
           group={details.row.group}
           submission={details.row.submission}
           onGrade={() => {
-            const id = details.deliverable.id
+            const { deliverable, row } = details
             setDetails(null)
-            onGrade(id)
+            onGrade(deliverable.id, row.group.id)
           }}
         />
       )}

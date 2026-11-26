@@ -173,6 +173,8 @@ export interface DemoSession {
   gradedAt: string
   submittedAt?: string
   validatedAt?: string
+  /** Renseignée quand la note validée est publiée aux étudiants. */
+  publishedAt?: string
 }
 
 export interface DemoDb {

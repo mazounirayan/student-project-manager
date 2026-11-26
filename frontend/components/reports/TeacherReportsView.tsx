@@ -51,6 +51,7 @@ export function TeacherReportsView({ projectId }: { projectId: number }) {
   const [error, setError] = useState<string | null>(null)
   const [route, setRoute] = useState<Route>({ kind: 'overview' })
   const configDirty = useRef(false)
+  const gradeDirty = useRef(false)
 
   const load = useCallback(
     async (silent = false) => {
@@ -84,6 +85,17 @@ export function TeacherReportsView({ projectId }: { projectId: number }) {
       if (!leave) return
       configDirty.current = false
     }
+    if (gradeDirty.current) {
+      const leave = await confirmAction({
+        title: 'Quitter sans enregistrer la note ?',
+        description: 'La note saisie pour ce rapport sera perdue. Enregistrez-la en brouillon pour la garder.',
+        confirmText: 'Quitter sans enregistrer',
+        cancelText: 'Rester ici',
+        destructive: true,
+      })
+      if (!leave) return
+      gradeDirty.current = false
+    }
     setRoute(next)
     window.history.replaceState(null, '', hashFor(next))
     window.scrollTo({ top: 0 })
@@ -92,6 +104,9 @@ export function TeacherReportsView({ projectId }: { projectId: number }) {
   const rows = useMemo(() => (data ? buildOverview(data.config, data.groups, data.reports, data.grades) : []), [data])
   const handleDirty = useCallback((dirty: boolean) => {
     configDirty.current = dirty
+  }, [])
+  const handleGradeDirty = useCallback((dirty: boolean) => {
+    gradeDirty.current = dirty
   }, [])
 
   if (error) return <ErrorState message={error} onRetry={() => load()} />
@@ -133,11 +148,19 @@ export function TeacherReportsView({ projectId }: { projectId: number }) {
   const current = route.kind === 'read' ? readable.find((row) => row.group.id === route.groupId) : undefined
 
   if (current) {
+    const next = readable[readable.findIndex((row) => row.group.id === current.group.id) + 1]
     return (
       <div className="space-y-6">
         <ReportNavigator rows={readable} currentGroupId={current.group.id} onSelect={(groupId) => go({ kind: 'read', groupId })} onBack={() => go({ kind: 'overview' })} />
         <ReportViewer key={current.group.id} row={current} config={config}>
-          <ReportGradingPanel reportId={current.report!.id} projectId={projectId} groupId={current.group.id} groupName={current.group.name} />
+          <ReportGradingPanel
+            projectId={projectId}
+            groupId={current.group.id}
+            groupName={current.group.name}
+            onDirtyChange={handleGradeDirty}
+            onChanged={() => load(true)}
+            onNext={next ? () => go({ kind: 'read', groupId: next.group.id }) : undefined}
+          />
         </ReportViewer>
       </div>
     )

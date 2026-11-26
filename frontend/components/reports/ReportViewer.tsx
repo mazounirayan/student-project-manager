@@ -5,9 +5,11 @@ import { CheckCircle2, Download, Loader2, PenLine } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { GradeStateBadge } from '@/components/grading/GradeStateBadge'
 import { downloadFile, errorMessage } from '@/lib/api'
 import { STATIC_DEMO } from '@/lib/demo/mode'
 import { formatDateFull, formatDateTime, formatNumber, formatTime, plural } from '@/lib/format'
+import { gradeState } from '@/lib/grading'
 import { fullName } from '@/lib/people'
 import {
   contentOf,
@@ -92,8 +94,9 @@ export function ReportViewer({ row, config, children }: ReportViewerProps) {
           <Fact label="Dernière activité">{row.lastActivity ? formatDateTime(row.lastActivity) : '–'}</Fact>
           <Fact label="Note">
             {grade ? (
-              <span className="tabular-nums">
-                {formatNumber(grade.totalScore, 1)} / 20{grade.status !== 'validated' && ' (provisoire)'}
+              <span className="flex flex-wrap items-center gap-2 tabular-nums">
+                {formatNumber(grade.totalScore, 1)} / 20
+                <GradeStateBadge state={gradeState(grade)} />
               </span>
             ) : (
               'Pas encore notée'
@@ -110,38 +113,43 @@ export function ReportViewer({ row, config, children }: ReportViewerProps) {
         </p>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
-        <nav aria-label="Sections du rapport" className="self-start lg:sticky lg:top-4">
-          <p className="mb-1 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Sections</p>
-          <ol className="space-y-0.5">
+      {/* Sur grand écran, la grille de notation reste à droite pendant la lecture ; sinon elle suit le rapport. */}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="grid min-w-0 gap-6 lg:grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-1">
+          <nav aria-label="Sections du rapport" className="self-start lg:sticky lg:top-4 xl:static">
+            <p className="mb-1 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Sections</p>
+            <ol className="space-y-0.5 xl:flex xl:flex-wrap xl:gap-x-1 xl:space-y-0">
+              {sections.map((section, index) => (
+                <li key={section.id}>
+                  <button
+                    type="button"
+                    onClick={() => scrollTo(sectionDomId(section.id))}
+                    className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring"
+                  >
+                    <span className="tabular-nums text-muted-foreground">{index + 1}.</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{section.title}</span>
+                      <span className="xl:hidden">
+                        <NavStatus section={section} content={contentOf(report, section.id)?.content} />
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </nav>
+
+          <div className="min-w-0 space-y-8">
+            {sections.length === 0 && <p className="text-sm text-muted-foreground">Aucune section n’est définie pour ce rapport.</p>}
             {sections.map((section, index) => (
-              <li key={section.id}>
-                <button
-                  type="button"
-                  onClick={() => scrollTo(sectionDomId(section.id))}
-                  className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring"
-                >
-                  <span className="tabular-nums text-muted-foreground">{index + 1}.</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{section.title}</span>
-                    <NavStatus section={section} content={contentOf(report, section.id)?.content} />
-                  </span>
-                </button>
-              </li>
+              <SectionReading key={section.id} index={index + 1} section={section} content={contentOf(report, section.id)} />
             ))}
-          </ol>
-        </nav>
-
-        <div className="min-w-0 space-y-8">
-          {sections.length === 0 && <p className="text-sm text-muted-foreground">Aucune section n’est définie pour ce rapport.</p>}
-          {sections.map((section, index) => (
-            <SectionReading key={section.id} index={index + 1} section={section} content={contentOf(report, section.id)} />
-          ))}
+          </div>
         </div>
-      </div>
 
-      <div id="notation-rapport" className="scroll-mt-4">
-        {children}
+        <aside id="notation-rapport" aria-label="Notation du rapport" className="scroll-mt-4 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto">
+          {children}
+        </aside>
       </div>
     </div>
   )

@@ -280,14 +280,15 @@ export function buildDemoDb(): DemoDb {
   const gridLivrable = {
     id: 1,
     projectId: p1.id,
-    name: "Évaluation des livrables",
+    name: "Évaluation du cahier des charges",
     type: "deliverable" as const,
     weight: 0.4,
+    deliverableId: d1.id,
     description: "Qualité du contenu, conformité aux consignes et soin de la restitution.",
     criteria: [
       { id: 11, gridId: 1, name: "Complétude du livrable", description: "Tous les éléments demandés sont présents.", maxScore: 20, weight: 0.4, type: "group" as const, hasComments: true },
-      { id: 12, gridId: 1, name: "Qualité rédactionnelle", description: "Clarté, orthographe, structure du document.", maxScore: 20, weight: 0.3, type: "group" as const, hasComments: true },
-      { id: 13, gridId: 1, name: "Conformité technique", description: "Cohérence des choix avec le cahier des charges.", maxScore: 20, weight: 0.3, type: "group" as const, hasComments: true },
+      { id: 12, gridId: 1, name: "Qualité rédactionnelle", description: "Clarté, orthographe, structure du document.", maxScore: 20, weight: 0.3, type: "group" as const, hasComments: false },
+      { id: 13, gridId: 1, name: "Conformité technique", description: "Cohérence des choix avec le cahier des charges.", maxScore: 20, weight: 0.3, type: "group" as const, hasComments: false },
     ],
   }
   const gridRapport = {
@@ -298,7 +299,7 @@ export function buildDemoDb(): DemoDb {
     weight: 0.25,
     description: "Structure, profondeur de l’analyse et restitution écrite.",
     criteria: [
-      { id: 21, gridId: 2, name: "Structure du rapport", maxScore: 20, weight: 0.5, type: "group" as const, hasComments: true },
+      { id: 21, gridId: 2, name: "Structure du rapport", maxScore: 20, weight: 0.5, type: "group" as const, hasComments: false },
       { id: 22, gridId: 2, name: "Analyse et recul", maxScore: 20, weight: 0.5, type: "group" as const, hasComments: true },
     ],
   }
@@ -311,8 +312,8 @@ export function buildDemoDb(): DemoDb {
     description: "Clarté de la présentation, gestion des questions, répartition de la parole.",
     criteria: [
       { id: 31, gridId: 3, name: "Clarté de la présentation", maxScore: 20, weight: 0.4, type: "group" as const, hasComments: true },
-      { id: 32, gridId: 3, name: "Réponses aux questions", maxScore: 20, weight: 0.4, type: "group" as const, hasComments: true },
-      { id: 33, gridId: 3, name: "Répartition de la parole", maxScore: 20, weight: 0.2, type: "group" as const, hasComments: true },
+      { id: 32, gridId: 3, name: "Réponses aux questions", maxScore: 20, weight: 0.4, type: "group" as const, hasComments: false },
+      { id: 33, gridId: 3, name: "Répartition de la parole", maxScore: 20, weight: 0.2, type: "group" as const, hasComments: false },
     ],
   }
 
@@ -333,6 +334,25 @@ export function buildDemoDb(): DemoDb {
     gradedAt: iso(-5 * DAY),
     submittedAt: iso(-5 * DAY),
     validatedAt: iso(-5 * DAY),
+    publishedAt: iso(-5 * DAY),
+  }
+  // Livrable du Groupe 2 : validé, pas encore publié.
+  const sessionG2Livrable = {
+    id: 3,
+    gridId: gridLivrable.id,
+    groupId: g2.id,
+    entries: [
+      { id: 301, criterionId: 11, score: 12, comment: "Il manque les cas d’utilisation des bibliothécaires." },
+      { id: 302, criterionId: 12, score: 13, comment: "Rédaction claire dans l’ensemble." },
+      { id: 303, criterionId: 13, score: 11, comment: "Les maquettes ne couvrent pas tous les écrans annoncés." },
+    ],
+    globalComment: "Dossier correct mais incomplet : reprenez les cas d’utilisation avant la soutenance.",
+    totalScore: 12,
+    status: "validated" as const,
+    gradedBy: teacher.id,
+    gradedAt: iso(-2 * DAY),
+    submittedAt: iso(-2 * DAY),
+    validatedAt: iso(-2 * DAY),
   }
   // Soutenance du Groupe 2 : brouillon commencé.
   const sessionG2Soutenance = {
@@ -340,12 +360,11 @@ export function buildDemoDb(): DemoDb {
     gridId: gridSoutenance.id,
     groupId: g2.id,
     entries: [
-      { id: 201, criterionId: 31, score: 12, comment: "" },
-      { id: 202, criterionId: 32, score: 10, comment: "" },
-      { id: 203, criterionId: 33, score: 0, comment: "" },
+      { id: 201, criterionId: 31, score: 12, comment: "Plan clair, démonstration trop rapide." },
+      { id: 202, criterionId: 32, score: 10, comment: "Réponses justes sur l’architecture, hésitantes sur les tests." },
     ],
     globalComment: "",
-    totalScore: 10.8,
+    totalScore: 11,
     status: "draft" as const,
     gradedBy: teacher.id,
     gradedAt: iso(-1 * DAY),
@@ -363,7 +382,7 @@ export function buildDemoDb(): DemoDb {
     reports,
     defenses,
     grids: [gridLivrable, gridRapport, gridSoutenance],
-    sessions: [sessionG1Livrable, sessionG2Soutenance],
+    sessions: [sessionG1Livrable, sessionG2Livrable, sessionG2Soutenance],
     seq: 1000,
   }
 }

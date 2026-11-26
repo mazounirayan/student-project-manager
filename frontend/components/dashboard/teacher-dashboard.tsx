@@ -81,7 +81,7 @@ function Overview({ data }: { data: TeacherOverview }) {
                 {data.gradingTasks.map((task) => (
                   <RowLink
                     key={task.key}
-                    href="/grading"
+                    href={`/grading?project=${task.projectId}`}
                     aside={
                       <>
                         {task.toGrade > 0 && <Badge>{task.toGrade} à noter</Badge>}

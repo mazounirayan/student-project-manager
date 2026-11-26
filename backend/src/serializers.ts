@@ -141,6 +141,7 @@ export function serializeSession(grade: Grade) {
     gradedBy: grade.gradedBy?.id ?? null,
     gradedAt: grade.updatedAt,
     validatedAt: grade.validatedAt ?? null,
+    publishedAt: grade.publishedAt ?? null,
   };
 }
 

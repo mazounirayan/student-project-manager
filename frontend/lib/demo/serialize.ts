@@ -198,7 +198,7 @@ export function serializeProjectDetail(db: DemoDb, project: DemoProject, viewer:
   }
 }
 
-export function serializeGrid(db: DemoDb, grid: { id: number; name: string; type: string; weight: number; description?: string; projectId?: number; criteria?: Array<{ id: number; name: string; description?: string; maxScore: number; weight: number; type: string; hasComments: boolean }> }): Record<string, unknown> {
+export function serializeGrid(db: DemoDb, grid: { id: number; name: string; type: string; weight: number; description?: string; projectId?: number; deliverableId?: number; criteria?: Array<{ id: number; name: string; description?: string; maxScore: number; weight: number; type: string; hasComments: boolean }> }): Record<string, unknown> {
   const criteria = grid.criteria ?? db.grids.find((g) => g.id === grid.id)?.criteria ?? []
   return {
     id: grid.id,
@@ -207,6 +207,7 @@ export function serializeGrid(db: DemoDb, grid: { id: number; name: string; type
     description: grid.description,
     type: grid.type,
     weight: grid.weight,
+    deliverableId: grid.deliverableId ?? null,
     criteria: criteria.map((c) => ({
       id: c.id,
       gridId: grid.id,
@@ -223,7 +224,7 @@ export function serializeGrid(db: DemoDb, grid: { id: number; name: string; type
   }
 }
 
-export function serializeSession(session: { id: number; gridId: number; groupId: number; entries: Array<{ id: number; criterionId: number; score: number; comment: string }>; globalComment: string; totalScore: number; status: string; gradedBy: number; gradedAt: string; submittedAt?: string; validatedAt?: string }): Record<string, unknown> {
+export function serializeSession(session: { id: number; gridId: number; groupId: number; entries: Array<{ id: number; criterionId: number; score: number; comment: string }>; globalComment: string; totalScore: number; status: string; gradedBy: number; gradedAt: string; submittedAt?: string; validatedAt?: string; publishedAt?: string }): Record<string, unknown> {
   return {
     id: session.id,
     gridId: session.gridId,
@@ -244,6 +245,7 @@ export function serializeSession(session: { id: number; gridId: number; groupId:
     gradedBy: session.gradedBy,
     gradedAt: session.gradedAt,
     submittedAt: session.submittedAt,
-    validatedAt: session.validatedAt,
+    validatedAt: session.validatedAt ?? null,
+    publishedAt: session.publishedAt ?? null,
   }
 }

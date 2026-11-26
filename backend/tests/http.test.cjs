@@ -38,7 +38,7 @@ test('les routes enseignant renvoient 403 à un étudiant', async () => {
   await withServer(async base => {
     const token = tokenFor(studentAccount);
     for (const [method, path] of [
-      ['POST', '/grading/sessions'], ['GET', '/grading/projects/1/summary'], ['POST', '/grading/grades/validate'],
+      ['POST', '/grading/sessions'], ['GET', '/grading/projects/1/summary'], ['POST', '/grading/grades/publish'],
       ['PUT', '/projects/1/groups'], ['POST', '/deliverables'], ['GET', '/deliverables/1/submissions'],
       ['GET', '/reports/projects/1'], ['POST', '/defenses/projects/1/schedule'], ['GET', '/submissions/1/similarity'],
       ['GET', '/promotions/my'], ['GET', '/users/students'],

@@ -517,7 +517,10 @@ export class GradingCriterion {
   criterionGrades!: CriterionGrade[];
 }
 
-/** Note d'un groupe pour une grille. Seules les notes « validated » sont visibles des étudiants. */
+/**
+ * Note d'un groupe pour une grille. Trois états : brouillon (`draft`), validée (`validated`, figée par
+ * l'enseignant) et publiée (validée avec `publishedAt`). Seules les notes publiées sont visibles des étudiants.
+ */
 @Entity()
 @Unique(['gradingGrid', 'group'])
 export class Grade {
@@ -536,6 +539,10 @@ export class Grade {
 
   @Column({ type: 'datetime', nullable: true })
   validatedAt?: Date | null;
+
+  /** Date de publication aux étudiants ; vide tant que la note n'est pas publiée. */
+  @Column({ type: 'datetime', nullable: true })
+  publishedAt?: Date | null;
 
   @CreateDateColumn()
   createdAt!: Date;

@@ -246,6 +246,6 @@ export function summarize(deliverable: Deliverable, groups: GroupRef[]): Deliver
   }
 }
 
-/** Adresse de la notation d’un livrable dans la page du projet (onglet Livrables, section Notation). */
-export const gradingHref = (projectId: number | string, deliverableId: number) =>
-  `${projectPath("/projects", projectId)}#deliverables/${deliverableId}`
+/** Adresse de la notation d’un livrable (et, si on la donne, d’un groupe) dans la page du projet : onglet Livrables, section Notation. */
+export const gradingHref = (projectId: number | string, deliverableId: number, groupId?: number) =>
+  `${projectPath("/projects", projectId)}#deliverables/${deliverableId}${groupId ? `/${groupId}` : ""}`

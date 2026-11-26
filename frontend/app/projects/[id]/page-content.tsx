@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowLeft, Download, AlertCircle, Calendar, Eye, EyeOff, FileText, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
+import { ArrowLeft, Download, Calendar, Eye, EyeOff, FileText, MoreHorizontal, Pencil, Plus, Trash2, Users } from "lucide-react"
 import { useEffect, useMemo, useState, useCallback } from "react"
 import GroupsBoard from "@/components/groups/GroupsBoard"
 import { DeliverableDialog, type DeliverableFormValues } from "@/components/projects/deliverable-dialog"
@@ -16,12 +16,9 @@ import { DeliverablesList } from "@/components/projects/deliverablesList-dialog"
 import { ScheduleDefenseDialog } from "@/components/projects/schedule-defense-dialog"
 import DefenseOrderTable from "@/components/projects/DefenseOrderTable"
 import { ProjectGradingSection } from "@/components/projects/ProjectGradingSection"
-import { ProjectGradingOverview } from "@/components/grading/project-grading-overview"
-import { CreateGradingGridDialog } from "@/components/grading/CreateGradingGridDialog"
 import { DeliverableGradingPanel } from "@/components/grading/DeliverableGradingPanel"
 import { apiPost, apiPut, downloadFile, errorMessage } from "@/lib/api"
 import type { Deliverable } from "@/lib/deliverables"
-import { Alert, AlertDescription } from "@/components/ui/alert"
 import { TeacherReportsView } from "@/components/reports/TeacherReportsView"
 import { DefenseGradingPanel } from "@/components/grading/DefenseGradingPanel"
 import { EmptyState } from "@/components/shared/EmptyState"
@@ -72,7 +69,9 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
   })
 
   const [gradingDeliverable, setGradingDeliverable] = useState<string | null>(null)
-  const [scrollToGrading, setScrollToGrading] = useState(false)
+  /** Groupe à ouvrir en premier dans la notation (liens « Noter » d’un groupe précis). */
+  const [gradingGroup, setGradingGroup] = useState<number | undefined>()
+  const [scrollTarget, setScrollTarget] = useState<string | null>(null)
 
   const projectId = useRouteProjectId(params.id)
 
@@ -95,26 +94,39 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
   }, [loadProject])
 
   // L’onglet ouvert est repris dans l’adresse (#groups), pour partager ou retrouver la page telle quelle.
-  useEffect(() => {
-    const [fromHash, deliverableId] = window.location.hash.slice(1).split("/")
-    if (TABS.includes(fromHash as TabValue)) setTab(fromHash as TabValue)
-    // #deliverables/12 : ouvre la notation du livrable 12 (lien « Noter » de la page Livrables).
-    if (fromHash === "deliverables" && Number(deliverableId) > 0) {
-      setGradingDeliverable(deliverableId)
-      setScrollToGrading(true)
+  // #deliverables/12/3 : notation du livrable 12, groupe 3 ; #defenses/3 : notation de la soutenance du groupe 3.
+  const openFromHash = useCallback(() => {
+    const [fromHash, first, second] = window.location.hash.slice(1).split("/")
+    if (!TABS.includes(fromHash as TabValue)) return
+    setTab(fromHash as TabValue)
+    if (fromHash === "deliverables" && Number(first) > 0) {
+      setGradingDeliverable(first)
+      setGradingGroup(Number(second) > 0 ? Number(second) : undefined)
+      setScrollTarget("notation-livrables")
+    }
+    if (fromHash === "defenses" && Number(first) > 0) {
+      setGradingGroup(Number(first))
+      setScrollTarget("notation-soutenances")
     }
   }, [])
 
-  const goToGrading = useCallback((deliverableId: number) => {
+  useEffect(() => {
+    openFromHash()
+    window.addEventListener("hashchange", openFromHash)
+    return () => window.removeEventListener("hashchange", openFromHash)
+  }, [openFromHash])
+
+  const goToGrading = useCallback((deliverableId: number, groupId?: number) => {
     setGradingDeliverable(String(deliverableId))
-    setScrollToGrading(true)
+    setGradingGroup(groupId)
+    setScrollTarget("notation-livrables")
   }, [])
 
   useEffect(() => {
-    if (!scrollToGrading || loading) return
-    document.getElementById("notation-livrables")?.scrollIntoView({ behavior: "smooth", block: "start" })
-    setScrollToGrading(false)
-  }, [scrollToGrading, loading])
+    if (!scrollTarget || loading) return
+    document.getElementById(scrollTarget)?.scrollIntoView({ behavior: "smooth", block: "start" })
+    setScrollTarget(null)
+  }, [scrollTarget, loading])
 
   const changeTab = useCallback((value: string) => {
     setTab(value as TabValue)
@@ -384,7 +396,15 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
                 <DefenseOrderTable defenses={defenses} onOrderChange={handlePersistOrder} />
               </CardContent>
             </Card>
-            <DefenseGradingPanel projectId={project.id} groups={groups || []} />
+            <Card id="notation-soutenances" className="mt-6 scroll-mt-6">
+              <CardHeader>
+                <CardTitle>Notation des soutenances</CardTitle>
+                <CardDescription>Notez chaque groupe pendant ou juste après son passage. Enregistrez un brouillon, puis validez la note.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <DefenseGradingPanel projectId={project.id} groups={groups} defenses={defenses} initialGroupId={gradingGroup} />
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="groups">
@@ -440,66 +460,44 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
               <Card id="notation-livrables" className="scroll-mt-6">
                 <CardHeader>
                   <CardTitle>Notation des livrables</CardTitle>
-                  <CardDescription>Évaluez directement les livrables rendus par les groupes</CardDescription>
+                  <CardDescription>Choisissez un livrable, puis notez les groupes un à un avec son rendu sous les yeux.</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {deliverables.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-12 text-center">
-                      <FileText className="mb-4 h-12 w-12 text-muted-foreground" aria-hidden="true" />
-                      <p className="text-lg font-medium text-muted-foreground">Aucun livrable à noter</p>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        Créez d’abord des livrables ci-dessus pour commencer la notation
-                      </p>
-                    </div>
+                    <EmptyState
+                      icon={FileText}
+                      title="Aucun livrable à noter"
+                      description="Créez d’abord un livrable ci-dessus : sa grille de notation se crée ensuite ici."
+                    />
+                  ) : !groups.length ? (
+                    <EmptyState
+                      icon={Users}
+                      title="Aucun groupe à noter"
+                      description="Constituez les groupes dans l’onglet Groupes : ils pourront ensuite être notés ici."
+                    />
                   ) : (
                     <Tabs value={gradingDeliverable ?? String(deliverables[0]?.id)} onValueChange={setGradingDeliverable} className="space-y-4">
-                      <TabsList className="flex w-full flex-wrap">
-                        {deliverables.map((d) => (
-                          <TabsTrigger key={d.id} value={String(d.id)} className="flex flex-wrap items-center gap-2">
-                            <FileText className="h-4 w-4" aria-hidden="true" />
-                            {d.name}
-                          </TabsTrigger>
-                        ))}
-                      </TabsList>
+                      <div className="-mx-1 overflow-x-auto px-1 pb-1">
+                        <TabsList className="w-max">
+                          {deliverables.map((d) => (
+                            <TabsTrigger key={d.id} value={String(d.id)}>
+                              {d.name}
+                            </TabsTrigger>
+                          ))}
+                        </TabsList>
+                      </div>
 
                       {deliverables.map((d) => (
                         <TabsContent key={d.id} value={String(d.id)} className="space-y-4">
-                          <Alert>
-                            <AlertCircle className="h-4 w-4" aria-hidden="true" />
-                            <AlertDescription>
-                              <div className="flex flex-wrap items-center gap-3 text-sm">
-                                <span>
-                                  <strong>Livrable :</strong> {d.name}
-                                </span>
-                                <span aria-hidden="true" className="text-muted-foreground">•</span>
-                                <span>
-                                  <strong>Échéance :</strong> {formatDateLong(d.deadline)}
-                                </span>
-                                <span aria-hidden="true" className="text-muted-foreground">•</span>
-                                <span>
-                                  <strong>{d.submissions?.length ?? 0}</strong> rendu
-                                  {(d.submissions?.length ?? 0) > 1 ? "s" : ""}
-                                </span>
-                              </div>
-                            </AlertDescription>
-                          </Alert>
-
-                          {!groups.length ? (
-                            <Alert variant="destructive">
-                              <AlertCircle className="h-4 w-4" aria-hidden="true" />
-                              <AlertDescription>
-                                Aucun groupe n’a été créé pour ce projet. Créez des groupes dans l’onglet « Groupes » pour
-                                commencer la notation.
-                              </AlertDescription>
-                            </Alert>
-                          ) : (
-                            <DeliverableGradingPanel
-                              key={`deliverable-${d.id}`}
-                              deliverableId={d.id}
-                              projectId={project.id}
-                              groups={groups}
-                            />
-                          )}
+                          <p className="text-sm text-muted-foreground">
+                            Échéance : {formatDateLong(d.deadline)} · {plural(d.submissions?.length ?? 0, "rendu")} sur {plural(groups.length, "groupe")}
+                          </p>
+                          <DeliverableGradingPanel
+                            projectId={project.id}
+                            deliverable={d}
+                            groups={groups}
+                            initialGroupId={String(d.id) === gradingDeliverable ? gradingGroup : undefined}
+                          />
                         </TabsContent>
                       ))}
                     </Tabs>
@@ -514,29 +512,7 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
           </TabsContent>
 
           <TabsContent value="grading">
-            <div className="space-y-6">
-              <ProjectGradingOverview projectId={Number(projectId)} />
-
-              <Card>
-                <CardHeader>
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <CardTitle>Grilles de notation</CardTitle>
-                      <CardDescription>
-                        Créez des grilles et définissez des critères pour chaque type d’évaluation
-                      </CardDescription>
-                    </div>
-                    <CreateGradingGridDialog
-                      projectId={Number(projectId)}
-                      onGridCreated={handleRefresh}
-                    />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <ProjectGradingSection project={project} onRefresh={handleRefresh} />
-                </CardContent>
-              </Card>
-            </div>
+            <ProjectGradingSection project={project} onRefresh={handleRefresh} />
           </TabsContent>
         </Tabs>
 

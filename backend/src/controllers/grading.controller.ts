@@ -67,6 +67,10 @@ export class GradingController {
     res.json(await this.gradingService.getStudentGrades(currentUser(req).id));
   };
 
+  myOverview = async (req: Request, res: Response) => {
+    res.json(await this.gradingService.getStudentOverview(currentUser(req).id));
+  };
+
   summary = async (req: Request, res: Response) => {
     res.json(await this.gradingService.getProjectSummary(parseId(req.params.projectId), currentUser(req).id));
   };
@@ -84,8 +88,11 @@ export class GradingController {
     res.send(csv);
   };
 
-  validateGrades = async (req: Request, res: Response) => {
-    await this.gradingService.validateProjectGrades(parseId(req.body.projectId), currentUser(req).id);
-    res.json({ success: true });
+  publishGrades = async (req: Request, res: Response) => {
+    const { projectId, groupId, gridId } = req.body;
+    res.json(await this.gradingService.publishGrades(parseId(projectId), currentUser(req).id, {
+      groupId: parseOptionalId(groupId ?? undefined),
+      gridId: parseOptionalId(gridId ?? undefined),
+    }));
   };
 }

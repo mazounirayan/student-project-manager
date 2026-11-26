@@ -187,8 +187,10 @@ export const validateWeights = [
   handleValidationErrors,
 ];
 
-export const validateGradesValidation = [
+export const validatePublication = [
   body('projectId').isInt({ min: 1 }).withMessage('Projet invalide'),
+  body('groupId').optional({ values: 'null' }).isInt({ min: 1 }).withMessage('Groupe invalide'),
+  body('gridId').optional({ values: 'null' }).isInt({ min: 1 }).withMessage('Grille invalide'),
   handleValidationErrors,
 ];
 

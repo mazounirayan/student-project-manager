@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { CheckCircle2, Search } from 'lucide-react'
+import { GradeStateBadge } from '@/components/grading/GradeStateBadge'
 import { StatTile } from '@/components/shared/StatTile'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Badge } from '@/components/ui/badge'
@@ -10,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { formatDate, formatDateTime, formatDayMonth, formatNumber, formatRelativeDay, plural } from '@/lib/format'
+import { gradeState } from '@/lib/grading'
 import { fullName, normalizeText } from '@/lib/people'
 import { countStates, STATE_LABELS, type GroupOverview, type ReportConfig, type ReportState } from '@/lib/reports'
 
@@ -186,9 +188,9 @@ function GroupRow({ row, onRead }: { row: GroupOverview; onRead: () => void }) {
 
       <div className="flex flex-wrap items-center gap-3 md:justify-end">
         {grade && (
-          <span className="text-sm tabular-nums">
+          <span className="flex items-center gap-2 text-sm tabular-nums">
             <span className="font-medium">{formatNumber(grade.totalScore, 1)} / 20</span>
-            {grade.status !== 'validated' && <span className="text-muted-foreground"> (provisoire)</span>}
+            <GradeStateBadge state={gradeState(grade)} />
           </span>
         )}
         {row.report ? (

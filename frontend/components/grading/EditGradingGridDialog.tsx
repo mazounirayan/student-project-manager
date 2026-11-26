@@ -1,160 +1,152 @@
 'use client'
 
-import { BACKEND_URL, assertOk } from "@/lib/api"
-import { toast } from "sonner"
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
+import { toast } from 'sonner'
+import { Loader2, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogTrigger
-} from '@/components/ui/dialog'
-import { Pencil } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { apiPut, errorMessage } from '@/lib/api'
+import { gridTypeLabel } from '@/lib/format'
+import type { Grid, GridType } from '@/lib/grading'
 
 interface EditGradingGridDialogProps {
-  grid: any
-  onGridUpdated?: (updated: any) => void
+  grid: Grid
+  deliverables?: Array<{ id: number; name: string }>
+  onGridUpdated?: () => void
 }
 
-export function EditGradingGridDialog({
-  grid,
-  onGridUpdated
-}: EditGradingGridDialogProps) {
+const TYPES: GridType[] = ['deliverable', 'report', 'defense']
+const NO_DELIVERABLE = 'none'
+
+const toNumber = (text: string) => Number(text.trim().replace(',', '.'))
+
+/** Modification du nom, du type, du livrable évalué, du poids et de la description d’une grille. */
+export function EditGradingGridDialog({ grid, deliverables = [], onGridUpdated }: EditGradingGridDialogProps) {
   const [open, setOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [formData, setFormData] = useState({
-    name: grid.name,
-    description: grid.description || '',
-    type: grid.type || 'deliverable',
-    weight: grid.weight || 1,
-    deliverableId: grid.deliverableId
-  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [name, setName] = useState(grid.name)
+  const [type, setType] = useState<GridType>(grid.type)
+  const [deliverableId, setDeliverableId] = useState(grid.deliverableId ? String(grid.deliverableId) : NO_DELIVERABLE)
+  const [weight, setWeight] = useState(String(Math.round(grid.weight * 1000) / 10).replace('.', ','))
+  const [description, setDescription] = useState(grid.description ?? '')
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
+  const reset = (next: boolean) => {
+    if (next) {
+      setName(grid.name)
+      setType(grid.type)
+      setDeliverableId(grid.deliverableId ? String(grid.deliverableId) : NO_DELIVERABLE)
+      setWeight(String(Math.round(grid.weight * 1000) / 10).replace('.', ','))
+      setDescription(grid.description ?? '')
+      setError(null)
+    }
+    setOpen(next)
+  }
 
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault()
+    const percent = toNumber(weight)
+    if (!name.trim()) return setError('Donnez un nom à la grille.')
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) return setError('Le poids doit être un pourcentage entre 0 et 100.')
+    setError(null)
+    setSaving(true)
     try {
-      const token = localStorage.getItem('token')
-      const response = await fetch(
-        `${BACKEND_URL}/api/grading/grids/${grid.id}`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify(formData)
-        }
-      )
-
-      await assertOk(response)
-
-      const updated = await response.json()
-      onGridUpdated?.(updated)
+      await apiPut(`/grading/grids/${grid.id}`, {
+        name: name.trim(),
+        type,
+        weight: percent / 100,
+        description: description.trim() || null,
+        deliverableId: type === 'deliverable' && deliverableId !== NO_DELIVERABLE ? Number(deliverableId) : null,
+      })
       setOpen(false)
-    } catch (error) {
-      toast.error('Erreur lors de la mise à jour de la grille.')
+      toast.success(`Grille « ${name.trim()} » mise à jour.`)
+      onGridUpdated?.()
+    } catch (err) {
+      setError(errorMessage(err, 'La grille n’a pas pu être modifiée.'))
     } finally {
-      setLoading(false)
+      setSaving(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={reset}>
       <DialogTrigger asChild>
         <Button variant="outline" size="sm">
-          <Pencil className="mr-2 h-4 w-4" />
+          <Pencil aria-hidden="true" />
           Modifier
+          <span className="sr-only"> la grille {grid.name}</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Modifier la grille</DialogTitle>
+          <DialogDescription>Les critères se modifient directement dans la carte de la grille.</DialogDescription>
         </DialogHeader>
-
-        <form onSubmit={handleSubmit}>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="name">Nom de la grille *</Label>
-              <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                required
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="type">Type *</Label>
-              <Select
-                value={formData.type}
-                onValueChange={(value: any) =>
-                  setFormData({ ...formData, type: value })
-                }
-              >
-                <SelectTrigger>
+        <form onSubmit={handleSubmit} className="grid gap-4">
+          <div className="grid gap-1.5">
+            <Label htmlFor={`edit-grid-name-${grid.id}`}>Nom de la grille</Label>
+            <Input id={`edit-grid-name-${grid.id}`} value={name} onChange={(event) => setName(event.target.value)} />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor={`edit-grid-type-${grid.id}`}>Ce qu’elle évalue</Label>
+              <Select value={type} onValueChange={(value) => setType(value as GridType)}>
+                <SelectTrigger id={`edit-grid-type-${grid.id}`} className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="deliverable">Livrable</SelectItem>
-                  <SelectItem value="report">Rapport</SelectItem>
-                  <SelectItem value="defense">Soutenance</SelectItem>
+                  {TYPES.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {gridTypeLabel(item)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
-
-          
-            <div className="grid gap-2">
-              <Label htmlFor="weight">Poids *</Label>
-              <Input
-                id="weight"
-                type="number"
-                min="1"
-                step="1"
-                max={100}
-                value={formData.weight * 100}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    weight: parseFloat(e.target.value) / 100
-                  })
-                }
-                required
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="description">Description</Label>
-              <Textarea
-                id="description"
-                value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
-              />
+            <div className="grid gap-1.5">
+              <Label htmlFor={`edit-grid-weight-${grid.id}`}>Poids dans la note finale (%)</Label>
+              <Input id={`edit-grid-weight-${grid.id}`} inputMode="decimal" value={weight} onChange={(event) => setWeight(event.target.value)} />
             </div>
           </div>
-
+          {type === 'deliverable' && deliverables.length > 0 && (
+            <div className="grid gap-1.5">
+              <Label htmlFor={`edit-grid-deliverable-${grid.id}`}>Livrable évalué</Label>
+              <Select value={deliverableId} onValueChange={setDeliverableId}>
+                <SelectTrigger id={`edit-grid-deliverable-${grid.id}`} className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_DELIVERABLE}>Aucun livrable précis</SelectItem>
+                  {deliverables.map((item) => (
+                    <SelectItem key={item.id} value={String(item.id)}>
+                      {item.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {deliverableId === NO_DELIVERABLE && <p className="text-xs text-muted-foreground">Sans livrable, la grille n’apparaît dans aucun livrable au moment de noter.</p>}
+            </div>
+          )}
+          <div className="grid gap-1.5">
+            <Label htmlFor={`edit-grid-description-${grid.id}`}>Description (facultatif)</Label>
+            <Textarea id={`edit-grid-description-${grid.id}`} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} />
+          </div>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} type="button">
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Annuler
             </Button>
-            <Button type="submit" disabled={loading}>
-              {loading ? 'Mise à jour...' : 'Enregistrer'}
+            <Button type="submit" disabled={saving}>
+              {saving && <Loader2 aria-hidden="true" className="animate-spin" />}
+              Enregistrer
             </Button>
           </DialogFooter>
         </form>

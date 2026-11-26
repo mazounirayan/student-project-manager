@@ -1,571 +1,281 @@
 'use client'
 
-import { BACKEND_URL, assertOk } from "@/lib/api"
-import { toast } from "sonner"
-import React, { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useState } from 'react'
+import { toast } from 'sonner'
+import { ArrowRight, ListChecks, Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
+import { CreateGradingGridDialog } from '@/components/grading/CreateGradingGridDialog'
+import { criterionBody, criterionError, CriterionFields, draftOfCriterion, emptyCriterion, type CriterionDraft } from '@/components/grading/CriterionFields'
+import { EditGradingGridDialog } from '@/components/grading/EditGradingGridDialog'
+import { ProjectGradingOverview } from '@/components/grading/project-grading-overview'
+import { EmptyState } from '@/components/shared/EmptyState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Edit, Trash2, Plus } from 'lucide-react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { ConfirmDialog } from '../ui/ConfirmDialog'
-import { EditGradingGridDialog } from '../grading/EditGradingGridDialog'
-import { formatDecimal, formatPercent, gridTypeLabel } from "@/lib/format"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { apiDelete, apiPost, apiPut, errorMessage } from '@/lib/api'
+import { confirmAction } from '@/lib/dialogs'
+import { formatDecimal, gridTypeLabel, plural } from '@/lib/format'
+import { criterionShares, percentOf, type Criterion, type Grid } from '@/lib/grading'
 
-type Criterion = {
-  id?: number
-  name: string
-  description?: string
-  maxScore: number
-  weight: number
-  type: 'group' | 'individual' | 'other'
-  hasComments?: boolean
-}
-
-type GradingGrid = {
+interface DeliverableRef {
   id: number
   name: string
-  type: string
-  weight: number
-  description?: string
-  criteria?: Criterion[]
 }
 
 interface ProjectGradingSectionProps {
-  project: any
-  onRefresh?: () => void
-  onGridUpdated?: (grid: any) => void
+  project: { id: number; gradingGrids?: unknown[]; deliverables?: unknown[] }
+  onRefresh: () => void | Promise<void>
 }
 
-export function ProjectGradingSection({ 
-  project, 
-  onRefresh,
-  onGridUpdated
-}: ProjectGradingSectionProps) {
-  const [grids, setGrids] = useState<GradingGrid[]>([])
-  const [addingForGridId, setAddingForGridId] = useState<number | null>(null)
-  const [editingCriterion, setEditingCriterion] = useState<{ gridId: number; criterion: Criterion } | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [deleteDialog, setDeleteDialog] = useState<{ 
-    open: boolean
-    criterionId: number | null
-    gridId: number | null 
-  }>({
-    open: false,
-    criterionId: null,
-    gridId: null
-  })
-  const [deleteGridDialog, setDeleteGridDialog] = useState<{ open: boolean; gridId: number | null }>({
-    open: false,
-    gridId: null
-  })
+/** Contenu de l’onglet Notation : pondération des grilles, puis chaque grille avec ses critères. */
+export function ProjectGradingSection({ project, onRefresh }: ProjectGradingSectionProps) {
+  const grids = (project.gradingGrids ?? []) as Grid[]
+  const deliverables = ((project.deliverables ?? []) as DeliverableRef[]).map(({ id, name }) => ({ id, name }))
+  const [criterionDialog, setCriterionDialog] = useState<{ grid: Grid; criterion: Criterion | null } | null>(null)
 
-  useEffect(() => {
-    if (project?.gradingGrids) {
-      setGrids(project.gradingGrids)
-    } else {
-      fetchGrading()
-    }
-  }, [project?.gradingGrids])
-
-  const fetchGrading = async () => {
-    try {
-      const token = localStorage.getItem('token')
-      const gridsResponse = await fetch(
-        `${BACKEND_URL}/api/grading/projects/${project.id}/grids`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-      const gridsData = await gridsResponse.json()
-      setGrids(gridsData ?? [])
-    } catch {
-      setGrids([])
-    }
-  }
-
-  async function apiAddCriterion(gridId: number, payload: Criterion): Promise<Criterion> {
-    const token = localStorage.getItem("token")
-    if (!token) throw new Error('User not authenticated')
-
-    const res = await fetch(`${BACKEND_URL}/api/grading/grids/${gridId}/criteria`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(payload),
+  async function deleteGrid(grid: Grid) {
+    const confirmed = await confirmAction({
+      title: `Supprimer la grille « ${grid.name} » ?`,
+      description: `${plural(grid.criteria.length, 'critère')} et toutes les notes saisies avec cette grille, publiées ou non, seront supprimés. Cette action est irréversible.`,
+      confirmText: 'Supprimer la grille',
+      destructive: true,
     })
-
-    await assertOk(res)
-
-    return res.json()
-  }
-
-  async function apiUpdateCriterion(criterionId: number, payload: Partial<Criterion>): Promise<Criterion> {
-    const token = localStorage.getItem("token")
-    if (!token) throw new Error('User not authenticated')
-
-    const res = await fetch(`${BACKEND_URL}/api/grading/criteria/${criterionId}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(payload),
-    })
-
-    await assertOk(res)
-
-    return res.json()
-  }
-
-  async function apiDeleteCriterion(criterionId: number): Promise<void> {
-    const token = localStorage.getItem("token")
-    if (!token) throw new Error('User not authenticated')
-
-    const res = await fetch(`${BACKEND_URL}/api/grading/criteria/${criterionId}`, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    })
-
-    await assertOk(res)
-  }
-
-  const handleOpenAddModal = (gridId: number) => {
-    setAddingForGridId(gridId)
-  }
-
-  const handleCloseAddModal = () => setAddingForGridId(null)
-
-  const handleAddCriterion = async (gridId: number, payload: Criterion) => {
+    if (!confirmed) return
     try {
-      setIsLoading(true)
-
-      const created = await apiAddCriterion(gridId, payload)
-
-      setGrids(prev =>
-        prev.map(g =>
-          g.id === gridId
-            ? { ...g, criteria: [...(g.criteria ?? []), created] }
-            : g
-        )
-      )
-
-      if (onGridUpdated) {
-        const updatedGrid = grids.find(g => g.id === gridId)
-        if (updatedGrid) {
-          onGridUpdated({
-            ...updatedGrid,
-            criteria: [...(updatedGrid.criteria ?? []), created]
-          })
-        }
-      }
-
-      handleCloseAddModal()
-
-    } catch {
-      toast.error("Impossible d’ajouter le critère. Vérifiez votre connexion ou réessayez.")
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleEditCriterion = (gridId: number, criterion: Criterion) => {
-    setEditingCriterion({ gridId, criterion })
-  }
-
-  const handleUpdateCriterion = async (criterionId: number, data: Partial<Criterion>) => {
-    try {
-      setIsLoading(true)
-
-      const updated = await apiUpdateCriterion(criterionId, data)
-
-      setGrids(prev =>
-        prev.map(g => ({
-          ...g,
-          criteria: g.criteria?.map(c =>
-            c.id === updated.id ? { ...c, ...updated } : c
-          ),
-        }))
-      )
-
-      if (onGridUpdated) {
-        const updatedGrid = grids.find(g => 
-          g.criteria?.some(c => c.id === criterionId)
-        )
-        if (updatedGrid) {
-          onGridUpdated(updatedGrid)
-        }
-      }
-
-      setEditingCriterion(null)
-
-    } catch {
-      toast.error("Erreur lors de la mise à jour du critère.")
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleDeleteCriterion = async () => {
-    if (!deleteDialog.criterionId) return
-    
-    setIsLoading(true)
-    try {
-      await apiDeleteCriterion(deleteDialog.criterionId)
-
-      setGrids(prev =>
-        prev.map(g =>
-          g.id === deleteDialog.gridId
-            ? { ...g, criteria: g.criteria?.filter(c => c.id !== deleteDialog.criterionId) }
-            : g
-        )
-      )
-
-      if (onGridUpdated) {
-        const updatedGrid = grids.find(g => g.id === deleteDialog.gridId)
-        if (updatedGrid) {
-          onGridUpdated(updatedGrid)
-        }
-      }
-
-      setDeleteDialog({ open: false, criterionId: null, gridId: null })
-
-    } catch {
-      toast.error("Erreur lors de la suppression du critère.")
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleDeleteGrid = async (gridId: number) => {
-    setDeleteGridDialog({ open: true, gridId })
-  }
-    
-  const confirmDeleteGrid = async () => {
-    if (!deleteGridDialog.gridId) return
-    const gridId = deleteGridDialog.gridId
-    setDeleteGridDialog({ open: false, gridId: null })
-    try {
-      const token = localStorage.getItem('token')
-      const res = await fetch(`${BACKEND_URL}/api/grading/grids/${gridId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      })
-
-      await assertOk(res)
-
-      setGrids(prev => prev.filter(g => g.id !== gridId))
-
-      onRefresh?.()
-
+      await apiDelete(`/grading/grids/${grid.id}`)
+      toast.success(`Grille « ${grid.name} » supprimée.`)
+      await onRefresh()
     } catch (error) {
-      toast.error('La grille n’a pas pu être supprimée.')
+      toast.error('La grille n’a pas été supprimée.', { description: errorMessage(error, 'Réessayez dans un instant.') })
     }
   }
 
-  function AddCriterionModal({ 
-    grid, 
-    open, 
-    onOpenChange, 
-    onAdd 
-  }: { 
-    grid: GradingGrid
-    open: boolean
-    onOpenChange: (open: boolean) => void
-    onAdd: (gId: number, payload: Criterion) => void 
-  }) {
-    const [form, setForm] = useState<Criterion>({ 
-      name: '', 
-      description: '', 
-      maxScore: 20, 
-      weight: 1, 
-      type: 'group', 
-      hasComments: true 
+  async function deleteCriterion(grid: Grid, criterion: Criterion) {
+    const confirmed = await confirmAction({
+      title: `Supprimer le critère « ${criterion.name} » ?`,
+      description: 'Sa note est retirée de toutes les notes déjà saisies pour cette grille, et leur total est recalculé. Cette action est irréversible.',
+      confirmText: 'Supprimer le critère',
+      destructive: true,
     })
-
-    return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Ajouter un critère à « {grid.name} »</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-3 py-2">
-            <div>
-              <Label>Nom *</Label>
-              <Input 
-                value={form.name} 
-                onChange={(e) => setForm({ ...form, name: e.target.value })} 
-                placeholder="Ex: Qualité du code"
-              />
-            </div>
-            <div>
-              <Label>Description</Label>
-              <Textarea 
-                value={form.description} 
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                placeholder="Critères d’évaluation..."
-                rows={3}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-          
-              <div>
-                <Label>Poids</Label>
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={form.weight } // afficher en %
-                onChange={(e) => setForm({ ...form, weight: Number(e.target.value)  })} // stocker en 0-1
-              />
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Annuler
-            </Button>
-            <Button 
-              onClick={() => onAdd(grid.id, form)}
-              disabled={!form.name.trim() || isLoading}
-            >
-              {isLoading ? 'Ajout...' : (
-                <>
-                  <Plus className="mr-2 h-4 w-4" /> Ajouter
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    )
+    if (!confirmed) return
+    try {
+      await apiDelete(`/grading/criteria/${criterion.id}`)
+      toast.success(`Critère « ${criterion.name} » supprimé.`)
+      await onRefresh()
+    } catch (error) {
+      toast.error('Le critère n’a pas été supprimé.', { description: errorMessage(error, 'Réessayez dans un instant.') })
+    }
   }
 
-  function EditCriterionModal({ 
-    criterion, 
-    open, 
-    onOpenChange, 
-    onSave 
-  }: { 
-    criterion: Criterion
-    open: boolean
-    onOpenChange: (v: boolean) => void
-    onSave: (id: number, data: Partial<Criterion>) => void 
-  }) {
-    const [form, setForm] = useState<Criterion>(criterion)
-    
-    React.useEffect(() => setForm(criterion), [criterion])
-    
+  if (grids.length === 0) {
     return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Modifier le critère</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-3 py-2">
-            <div>
-              <Label>Nom</Label>
-              <Input 
-                value={form.name} 
-                onChange={(e) => setForm({ ...form, name: e.target.value })} 
-              />
-            </div>
-            <div>
-              <Label>Description</Label>
-              <Textarea 
-                value={form.description} 
-                onChange={(e) => setForm({ ...form, description: e.target.value })} 
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              
-              <div>
-                <Label>Poids</Label>
-                <Input 
-                  type="number" 
-                  value={form.weight } 
-                  onChange={(e) => setForm({ ...form, weight: Number(e.target.value)  })} 
-                />
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Annuler
-            </Button>
-            <Button 
-              onClick={() => onSave(criterion.id!, form)}
-              disabled={isLoading}
-            >
-              {isLoading ? 'Enregistrement...' : (
-                <>
-                  <Edit className="mr-2 h-4 w-4" /> Enregistrer
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EmptyState
+        icon={ListChecks}
+        title="Aucune grille de notation pour ce projet"
+        description="Une grille liste les critères d’une évaluation, chacun avec son barème et son coefficient. Créez-en une par livrable, une pour le rapport et une pour la soutenance : vous noterez ensuite chaque groupe depuis les onglets Livrables, Rapports et Soutenances."
+        action={<CreateGradingGridDialog projectId={project.id} deliverables={deliverables} label="Créer la première grille" />}
+      />
     )
   }
 
   return (
-    <div className="space-y-4">
-      {grids.length === 0 && (
-        <div className="text-sm text-muted-foreground p-4 text-center border rounded-lg">
-          Aucune grille de notation pour ce projet.
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Les grilles décrivent ce que vous évaluez. Les notes se saisissent dans les onglets Livrables, Rapports et Soutenances ; leur avancement et leur publication
+          se suivent dans Évaluations.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline">
+            <Link href={`/grading?project=${project.id}`}>
+              Suivre les notes
+              <ArrowRight aria-hidden="true" />
+            </Link>
+          </Button>
+          <CreateGradingGridDialog projectId={project.id} deliverables={deliverables} />
         </div>
-      )}
+      </div>
 
-      {grids.map(grid => (
-        <div key={grid.id} className="p-4 bg-muted/50 rounded-lg border">
-          <div className="flex flex-wrap items-start justify-between gap-4 mb-3">
-            <div>
-              <h4 className="font-semibold text-lg">
-                {grid.name} 
-                <Badge variant="outline" className="ml-2 text-xs">
-                  {gridTypeLabel(grid.type)}
-                </Badge>
-              </h4>
-              {grid.description && (
-                <p className="text-sm text-muted-foreground mt-1">
-                  {grid.description}
-                </p>
-              )}
-            </div>
+      <ProjectGradingOverview projectId={project.id} grids={grids} onSaved={onRefresh} />
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">
-                Poids : {formatPercent(grid.weight, 0)}
-              </Badge>
-              
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => handleOpenAddModal(grid.id)}
-              >
-                <Plus className="mr-1 h-4 w-4" /> Critère
-              </Button>
+      <div className="space-y-4">
+        {grids.map((grid) => (
+          <GridCard
+            key={grid.id}
+            grid={grid}
+            deliverables={deliverables}
+            onChanged={onRefresh}
+            onAddCriterion={() => setCriterionDialog({ grid, criterion: null })}
+            onEditCriterion={(criterion) => setCriterionDialog({ grid, criterion })}
+            onDeleteCriterion={(criterion) => deleteCriterion(grid, criterion)}
+            onDelete={() => deleteGrid(grid)}
+          />
+        ))}
+      </div>
 
-              <EditGradingGridDialog
-                grid={grid}
-                onGridUpdated={onRefresh}
-              />
-
-              <Button 
-                variant="destructive" 
-                size="sm"
-                onClick={() => handleDeleteGrid(grid.id)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            {(!grid.criteria || grid.criteria.length === 0) && (
-              <div className="text-sm text-muted-foreground p-3 text-center border rounded bg-muted/30">
-                Aucun critère défini. Utilisez le bouton « Critère » pour en ajouter.
-              </div>
-            )}
-
-            {(grid.criteria ?? []).map((c) => (
-              <div 
-                key={c.id} 
-                className="flex flex-wrap items-center justify-between p-3 bg-card rounded border hover:border-primary/50 transition-colors"
-              >
-                <div className="flex-1">
-                  <div className="font-medium text-sm flex flex-wrap items-center gap-2">
-                    {c.name}
-                    {c.hasComments && (
-                      <Badge variant="outline" className="text-xs">
-                        Commentaire attendu
-                      </Badge>
-                    )}
-                  </div>
-                  {c.description && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {c.description}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">Sur {c.maxScore}</Badge>
-                  <Badge variant="secondary">Coef. {formatDecimal(c.weight)}</Badge>
-
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => handleEditCriterion(grid.id, c)}
-                  >
-                    <Edit className="h-4 w-4" />
-                  </Button>
-
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => setDeleteDialog({ 
-                      open: true, 
-                      criterionId: c.id!, 
-                      gridId: grid.id 
-                    })}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {addingForGridId === grid.id && (
-            <AddCriterionModal
-              grid={grid}
-              open={true}
-              onOpenChange={(open) => { if (!open) handleCloseAddModal() }}
-              onAdd={handleAddCriterion}
-            />
-          )}
-        </div>
-      ))}
-
-      {editingCriterion && (
-        <EditCriterionModal
-          criterion={editingCriterion.criterion}
-          open={true}
-          onOpenChange={(v) => { if (!v) setEditingCriterion(null) }}
-          onSave={handleUpdateCriterion}
+      {criterionDialog && (
+        <CriterionDialog
+          key={`${criterionDialog.grid.id}-${criterionDialog.criterion?.id ?? 'new'}`}
+          grid={criterionDialog.grid}
+          criterion={criterionDialog.criterion}
+          onClose={() => setCriterionDialog(null)}
+          onSaved={onRefresh}
         />
       )}
-
-      <ConfirmDialog
-        open={deleteDialog.open}
-        onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
-        onConfirm={handleDeleteCriterion}
-        title="Supprimer ce critère ?"
-        description="Cette action est irréversible. Toutes les notes associées à ce critère seront également supprimées."
-        confirmText="Supprimer"
-        variant="destructive"
-      />
-
-      <ConfirmDialog
-        open={deleteGridDialog.open}
-        onOpenChange={(open) => setDeleteGridDialog({ ...deleteGridDialog, open })}
-        onConfirm={confirmDeleteGrid}
-        title="Supprimer cette grille ?"
-        description="Cette action est irréversible. Les critères et les notes rattachées à cette grille seront également supprimés."
-        confirmText="Supprimer"
-        variant="destructive"
-      />
     </div>
+  )
+}
+
+interface GridCardProps {
+  grid: Grid
+  deliverables: DeliverableRef[]
+  onChanged: () => void | Promise<void>
+  onAddCriterion: () => void
+  onEditCriterion: (criterion: Criterion) => void
+  onDeleteCriterion: (criterion: Criterion) => void
+  onDelete: () => void
+}
+
+function GridCard({ grid, deliverables, onChanged, onAddCriterion, onEditCriterion, onDeleteCriterion, onDelete }: GridCardProps) {
+  const shares = criterionShares(grid.criteria)
+  const deliverable = deliverables.find((item) => item.id === grid.deliverableId)
+  const unlinked = grid.type === 'deliverable' && !deliverable && deliverables.length > 0
+
+  return (
+    <article className="rounded-xl border bg-card text-card-foreground shadow-sm">
+      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 border-b p-4 sm:p-5">
+        <div className="min-w-0 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold leading-snug">{grid.name}</h3>
+            <Badge variant="outline">{gridTypeLabel(grid.type)}</Badge>
+            <Badge variant="secondary">{percentOf(grid.weight)} de la note finale</Badge>
+          </div>
+          {deliverable && <p className="text-sm text-muted-foreground">Évalue le livrable « {deliverable.name} »</p>}
+          {unlinked && (
+            <p className="text-sm text-destructive">Cette grille n’est rattachée à aucun livrable : elle n’apparaît pas au moment de noter. Modifiez-la pour choisir le livrable.</p>
+          )}
+          {grid.description && <p className="text-sm text-muted-foreground">{grid.description}</p>}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <EditGradingGridDialog grid={grid} deliverables={deliverables} onGridUpdated={onChanged} />
+          <Button variant="outline" size="sm" onClick={onDelete}>
+            <Trash2 aria-hidden="true" />
+            Supprimer
+            <span className="sr-only"> la grille {grid.name}</span>
+          </Button>
+        </div>
+      </header>
+
+      {grid.criteria.length === 0 ? (
+        <p className="px-4 py-4 text-sm text-muted-foreground sm:px-5">Cette grille n’a pas encore de critère : elle ne permet pas de noter. Ajoutez-en un ci-dessous.</p>
+      ) : (
+        <ul className="divide-y px-4 sm:px-5">
+          {grid.criteria.map((criterion) => (
+            <li key={criterion.id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 py-3">
+              <div className="min-w-0 flex-[1_1_14rem] space-y-0.5">
+                <p className="text-sm font-medium">{criterion.name}</p>
+                {criterion.description && <p className="text-xs text-muted-foreground">{criterion.description}</p>}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <p className="text-xs tabular-nums text-muted-foreground">
+                  Sur {formatDecimal(criterion.maxScore)} · coefficient {formatDecimal(criterion.weight)} · {percentOf(shares.get(criterion.id) ?? 0)} de la note
+                </p>
+                {criterion.hasComments && <Badge variant="outline">Commentaire attendu</Badge>}
+                <span className="flex items-center">
+                  <Button variant="ghost" size="icon" className="size-8" onClick={() => onEditCriterion(criterion)}>
+                    <Pencil aria-hidden="true" />
+                    <span className="sr-only">Modifier le critère {criterion.name}</span>
+                  </Button>
+                  <Button variant="ghost" size="icon" className="size-8" onClick={() => onDeleteCriterion(criterion)}>
+                    <Trash2 aria-hidden="true" className="text-destructive" />
+                    <span className="sr-only">Supprimer le critère {criterion.name}</span>
+                  </Button>
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <footer className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t px-4 py-3 sm:px-5">
+        <Button variant="outline" size="sm" onClick={onAddCriterion}>
+          <Plus aria-hidden="true" />
+          Ajouter un critère
+        </Button>
+        {grid.criteria.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Note sur 20 : moyenne des {plural(grid.criteria.length, 'critère')} pondérée par leurs coefficients (total {formatDecimal(grid.criteria.reduce((sum, c) => sum + c.weight, 0))}).
+          </p>
+        )}
+      </footer>
+    </article>
+  )
+}
+
+interface CriterionDialogProps {
+  grid: Grid
+  criterion: Criterion | null
+  onClose: () => void
+  onSaved: () => void | Promise<void>
+}
+
+/** Ajout ou modification d’un critère d’une grille. */
+function CriterionDialog({ grid, criterion, onClose, onSaved }: CriterionDialogProps) {
+  const [value, setValue] = useState<CriterionDraft>(criterion ? draftOfCriterion(criterion) : emptyCriterion())
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function save() {
+    const problem = criterionError(value)
+    if (problem) return setError(problem)
+    setError(null)
+    setSaving(true)
+    try {
+      if (criterion) await apiPut(`/grading/criteria/${criterion.id}`, criterionBody(value))
+      else await apiPost(`/grading/grids/${grid.id}/criteria`, criterionBody(value))
+      toast.success(criterion ? 'Critère modifié.' : `Critère ajouté à « ${grid.name} ».`)
+      onClose()
+      await onSaved()
+    } catch (err) {
+      setError(errorMessage(err, 'Le critère n’a pas pu être enregistré.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{criterion ? 'Modifier le critère' : `Ajouter un critère à « ${grid.name} »`}</DialogTitle>
+          <DialogDescription>
+            {criterion ? 'Les notes déjà saisies pour cette grille sont recalculées avec le nouveau barème et le nouveau coefficient.' : 'Le critère apparaîtra dans le formulaire de notation de chaque groupe.'}
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            void save()
+          }}
+          className="grid gap-4"
+        >
+          <CriterionFields idPrefix={`criterion-${grid.id}`} value={value} onChange={setValue} />
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Annuler
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving && <Loader2 aria-hidden="true" className="animate-spin" />}
+              {criterion ? 'Enregistrer' : 'Ajouter le critère'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
