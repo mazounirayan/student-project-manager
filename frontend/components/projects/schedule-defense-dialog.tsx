@@ -1,314 +1,202 @@
 "use client"
 
-import { formatDateTime } from "@/lib/format"
-import type React from "react"
-import { useState } from "react"
+import { useMemo, useState, type FormEvent } from "react"
+import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Calendar, Clock } from "lucide-react"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { toast } from "sonner"
+import { Textarea } from "@/components/ui/textarea"
+import { computeSlots, formatDuration, startOf, type PlanSettings } from "@/lib/defenses"
+import { errorMessage } from "@/lib/api"
+import { formatDateFull, formatTime, plural } from "@/lib/format"
 
-interface ScheduleDefenseDialogProps {
-  groupCount: number
-  onDefenseScheduled: (defenseData: {
-    startDateTime: string
-    endDateTime?: string
-    durationPerGroup?: number
-    location: string
-  }) => void
+export interface SchedulePayload {
+  startDateTime: string
+  durationPerGroup: number
+  breakMinutes: number
+  location: string
+  instructions: string
 }
 
-export function ScheduleDefenseDialog({
-  groupCount,
-  onDefenseScheduled,
-}: ScheduleDefenseDialogProps) {
-  const [open, setOpen] = useState(false)
-  const [startDate, setStartDate] = useState("")
-  const [startTime, setStartTime] = useState("")
-  const [endDate, setEndDate] = useState("")
-  const [endTime, setEndTime] = useState("")
-  const [location, setLocation] = useState("")
-  const [durationPerGroup, setDurationPerGroup] = useState(30)
-  const [scheduleMode, setScheduleMode] = useState<"duration" | "timeRange">("duration")
+interface ScheduleDefenseDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  /** Groupes qui recevront un créneau, dans l’ordre de passage. */
+  groups: { id: number; name: string }[]
+  /** Réglages de départ : ceux du planning en cours, ou des valeurs courantes. */
+  initial: PlanSettings
+  /** Il existe déjà un planning : on le modifie. */
+  editing: boolean
+  /** Groupes déjà commencés ou passés, qui ne changent pas. */
+  keptCount: number
+  /** Renvoie false si l’enseignante renonce (par exemple à la confirmation) ; une erreur s’affiche dans le formulaire. */
+  onSubmit: (payload: SchedulePayload) => Promise<boolean>
+}
 
-  const calculateDurationPerGroup = () => {
-    if (!startDate || !startTime || !endTime || groupCount === 0) return 0
-
-    const start = new Date(`${startDate}T${startTime}`)
-    let end = new Date(`${endDate || startDate}T${endTime}`)
-    if (end <= start) end = new Date(end.getTime() + 24 * 60 * 60 * 1000)
-
-    const totalMinutes = Math.floor((end.getTime() - start.getTime()) / (1000 * 60))
-    if (totalMinutes <= 0) return 0
-    return Math.floor(totalMinutes / groupCount)
-  }
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-
-    if (!startDate || !startTime || !location) {
-      toast.error("Champs manquants", { description: "Indiquez la date, l’heure de début et le lieu." })
-      return
-    }
-
-    const startDateTime = new Date(`${startDate}T${startTime}`).toISOString()
-
-    if (scheduleMode === "duration") {
-      if (!durationPerGroup || durationPerGroup <= 0) return
-      onDefenseScheduled({
-        startDateTime,
-        durationPerGroup,
-        location,
-      })
-    } else {
-      if (!endTime) return
-      let end = new Date(`${endDate || startDate}T${endTime}`)
-      const start = new Date(`${startDate}T${startTime}`)
-      if (end <= start) end = new Date(end.getTime() + 24 * 60 * 60 * 1000)
-      const endDateTime = end.toISOString()
-      onDefenseScheduled({
-        startDateTime,
-        endDateTime,
-        location,
-      })
-    }
-
-    setOpen(false)
-    setStartDate("")
-    setStartTime("")
-    setEndDate("")
-    setEndTime("")
-    setLocation("")
-    setDurationPerGroup(30)
-  }
-
-  const calculatedDuration = scheduleMode === "timeRange" ? calculateDurationPerGroup() : null
-  const totalDuration =
-    scheduleMode === "timeRange" && startDate && startTime && (endDate || startDate) && endTime
-      ? Math.floor(
-          ((new Date(`${endDate || startDate}T${endTime}`).getTime() -
-            new Date(`${startDate}T${startTime}`).getTime() +
-            (new Date(`${endDate || startDate}T${endTime}`) <= new Date(`${startDate}T${startTime}`)
-              ? 24 * 60 * 60 * 1000
-              : 0)) /
-            (1000 * 60))
-        )
-      : null
-
+export function ScheduleDefenseDialog({ open, onOpenChange, ...props }: ScheduleDefenseDialogProps) {
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button>
-          <Calendar className="mr-2 h-4 w-4" />
-          Planifier les soutenances
-        </Button>
-      </DialogTrigger>
-
-      <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
-        <DialogHeader className="pb-2 border-b border-muted">
-          <DialogTitle>Planifier les soutenances</DialogTitle>
-          <DialogDescription>
-            Choisissez le mode de planification et définissez les paramètres.
-            {groupCount > 0 &&
-              ` (${groupCount} groupe${groupCount > 1 ? "s" : ""} inscrit${groupCount > 1 ? "s" : ""})`}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="overflow-y-auto flex-1 px-1">
-          <form onSubmit={handleSubmit} id="schedule-form">
-            <div className="grid gap-4 py-4">
-              <div className="grid gap-3">
-                <Label>Mode de planification</Label>
-                <RadioGroup
-                  value={scheduleMode}
-                  onValueChange={(v) => setScheduleMode(v as "duration" | "timeRange")}
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="duration" id="duration" />
-                    <Label htmlFor="duration" className="font-normal cursor-pointer">
-                      Date/heure de début + durée par groupe
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="timeRange" id="timeRange" />
-                    <Label htmlFor="timeRange" className="font-normal cursor-pointer">
-                      Plage horaire (durée calculée automatiquement)
-                    </Label>
-                  </div>
-                </RadioGroup>
-              </div>
-
-              <div className="grid gap-2">
-                <Label htmlFor="startDate">Date de début</Label>
-                <div className="relative">
-                  <Calendar className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    id="startDate"
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="pl-10"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-2">
-                <Label htmlFor="startTime">Heure de début</Label>
-                <div className="relative">
-                  <Clock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    id="startTime"
-                    type="time"
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    className="pl-10"
-                    required
-                  />
-                </div>
-              </div>
-
-              {scheduleMode === "duration" && (
-                <div className="grid gap-2">
-                  <Label htmlFor="duration">Durée par groupe (minutes)</Label>
-                  <Input
-                    id="duration"
-                    type="number"
-                    min="10"
-                    max="180"
-                    step="5"
-                    value={durationPerGroup}
-                    onChange={(e) => setDurationPerGroup(Number(e.target.value))}
-                    placeholder="30"
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Durée recommandée : 20-45 minutes par groupe
-                  </p>
-                </div>
-              )}
-
-              {scheduleMode === "timeRange" && (
-                <>
-                  <div className="grid gap-2">
-                    <Label htmlFor="endDate">Date de fin</Label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="endDate"
-                        type="date"
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        className="pl-10"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid gap-2">
-                    <Label htmlFor="endTime">Heure de fin</Label>
-                    <div className="relative">
-                      <Clock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="endTime"
-                        type="time"
-                        value={endTime}
-                        onChange={(e) => setEndTime(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  {calculatedDuration !== null && totalDuration !== null && (
-                    <div className="p-3 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
-                      <div className="space-y-1 text-sm">
-                        <p>
-                          <strong>Durée totale :</strong> {totalDuration} minutes
-                        </p>
-                        <p>
-                          <strong>Nombre de groupes :</strong> {groupCount}
-                        </p>
-                        <p className={calculatedDuration < 15 ? "text-red-600 font-semibold" : ""}>
-                          <strong>Durée par groupe :</strong> {calculatedDuration} minutes
-                        </p>
-                        {calculatedDuration < 15 && (
-                          <p className="text-xs text-red-600 mt-2">
-                            Attention : La durée par groupe est très courte. Augmentez la plage horaire.
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-
-              <div className="grid gap-2">
-                <Label htmlFor="location">Lieu</Label>
-                <Input
-                  id="location"
-                  value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                  placeholder="Ex: Salle A101"
-                  required
-                />
-              </div>
-
-              {startDate && startTime && (
-                <div className="p-3 bg-muted/50 rounded-lg">
-                  <h4 className="text-sm font-medium mb-2">Aperçu de la planification</h4>
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p>
-                      <strong>Début :</strong>{" "}
-                      {formatDateTime(`${startDate}T${startTime}`)}
-                    </p>
-
-                    {scheduleMode === "duration" && (
-                      <p>
-                        <strong>Durée par groupe :</strong> {durationPerGroup} minutes
-                      </p>
-                    )}
-
-                    {scheduleMode === "timeRange" && endTime && (
-                      <p>
-                        <strong>Fin :</strong>{" "}
-                        {formatDateTime(`${endDate || startDate}T${endTime}`)}
-                      </p>
-                    )}
-
-                    <p>
-                      <strong>Lieu :</strong> {location || "—"}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Les créneaux seront automatiquement attribués aux groupes selon l’ordre
-                      d’inscription.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </form>
-        </div>
-
-        <DialogFooter className="mt-4">
-          <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-            Annuler
-          </Button>
-          <Button type="submit" form="schedule-form">
-            Planifier les soutenances
-          </Button>
-        </DialogFooter>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+        {/* Le formulaire est monté à chaque ouverture : il repart des réglages du planning. */}
+        <ScheduleForm {...props} onCancel={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
+  )
+}
+
+function ScheduleForm({ groups, initial, editing, keptCount, onSubmit, onCancel }: Omit<ScheduleDefenseDialogProps, "open" | "onOpenChange"> & { onCancel: () => void }) {
+  const [settings, setSettings] = useState<PlanSettings>(initial)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const set = <K extends keyof PlanSettings>(key: K, value: PlanSettings[K]) => setSettings((current) => ({ ...current, [key]: value }))
+
+  const start = settings.date && settings.time ? startOf(settings) : null
+  const validStart = start && !Number.isNaN(start.getTime()) ? start : null
+  const slots = useMemo(
+    () => (validStart && settings.duration > 0 ? computeSlots(validStart, settings.duration, Math.max(0, settings.pause || 0), groups.length) : []),
+    [validStart, settings.duration, settings.pause, groups.length],
+  )
+  const last = slots[slots.length - 1]
+  const inThePast = validStart !== null && validStart.getTime() < Date.now()
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!validStart) return
+    setPending(true)
+    setError(null)
+    try {
+      const saved = await onSubmit({
+        startDateTime: validStart.toISOString(),
+        durationPerGroup: settings.duration,
+        breakMinutes: settings.pause || 0,
+        location: settings.location.trim(),
+        instructions: settings.instructions.trim(),
+      })
+      if (!saved) setPending(false)
+    } catch (err) {
+      setError(errorMessage(err, "Impossible d’enregistrer le planning."))
+      setPending(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-5">
+      <DialogHeader>
+        <DialogTitle>{editing ? "Modifier le planning" : "Planifier les soutenances"}</DialogTitle>
+        <DialogDescription>
+          {editing && keptCount > 0
+            ? `${plural(keptCount, "groupe")} ${keptCount > 1 ? "ont déjà commencé et ne changent" : "a déjà commencé et ne change"} pas. ${
+                groups.length > 1 ? `Les ${groups.length} autres sont replanifiés` : "L’autre groupe est replanifié"
+              }, dans l’ordre actuel.`
+            : `${groups.length > 1 ? `Les ${groups.length} groupes passent` : "Le groupe passe"} l’un après l’autre, dans l’ordre indiqué plus bas. Vous pourrez ensuite changer l’ordre.`}
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-1.5">
+          <Label htmlFor="defense-date">Date</Label>
+          <Input id="defense-date" type="date" required value={settings.date} onChange={(event) => set("date", event.target.value)} />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="defense-time">Heure de début</Label>
+          <Input id="defense-time" type="time" required value={settings.time} onChange={(event) => set("time", event.target.value)} />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="defense-duration">Durée par groupe (minutes)</Label>
+          <Input
+            id="defense-duration"
+            type="number"
+            required
+            min={5}
+            max={240}
+            step={5}
+            inputMode="numeric"
+            value={settings.duration || ""}
+            onChange={(event) => set("duration", Number(event.target.value))}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="defense-pause">Pause entre deux groupes (minutes)</Label>
+          <Input
+            id="defense-pause"
+            type="number"
+            min={0}
+            max={120}
+            step={5}
+            inputMode="numeric"
+            value={Number.isNaN(settings.pause) ? "" : settings.pause}
+            onChange={(event) => set("pause", Number(event.target.value))}
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="defense-location">Lieu</Label>
+        <Input id="defense-location" required value={settings.location} placeholder="Par exemple : Amphi B" onChange={(event) => set("location", event.target.value)} />
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="defense-instructions">
+          Consignes de préparation <span className="font-normal text-muted-foreground">(facultatif)</span>
+        </Label>
+        <Textarea
+          id="defense-instructions"
+          rows={3}
+          maxLength={2000}
+          value={settings.instructions}
+          placeholder="Durée de l’exposé, démonstration attendue, documents à apporter…"
+          aria-describedby="defense-instructions-hint"
+          onChange={(event) => set("instructions", event.target.value)}
+        />
+        <p id="defense-instructions-hint" className="text-xs text-muted-foreground">
+          Les étudiants le lisent avec leur créneau.
+        </p>
+      </div>
+
+      <section aria-labelledby="defense-preview" className="rounded-md border bg-muted/40 p-3">
+        <h3 id="defense-preview" className="text-sm font-medium">
+          Créneaux calculés
+        </h3>
+        {slots.length === 0 ? (
+          <p className="mt-1 text-sm text-muted-foreground">Indiquez la date, l’heure de début et la durée pour voir l’heure de chaque groupe.</p>
+        ) : (
+          <>
+            <p className="text-xs text-muted-foreground">
+              {formatDateFull(slots[0].start)} · {formatDuration(settings.duration)} par groupe · fin prévue à {formatTime(last.end)}
+            </p>
+            <ol className="mt-2 max-h-44 space-y-1 overflow-y-auto pr-1 text-sm">
+              {slots.map((slot, index) => (
+                <li key={groups[index].id} className="flex flex-wrap justify-between gap-x-3">
+                  <span>
+                    <span className="tabular-nums text-muted-foreground">{keptCount + index + 1}.</span> {groups[index].name}
+                  </span>
+                  <span className="tabular-nums text-muted-foreground">
+                    {formatTime(slot.start)} – {formatTime(slot.end)}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+        {inThePast && <p className="mt-2 text-xs text-destructive">Ce début est déjà passé : les créneaux calculés le sont aussi.</p>}
+      </section>
+
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel} disabled={pending}>
+          Annuler
+        </Button>
+        <Button type="submit" disabled={pending || !validStart || slots.length === 0}>
+          {pending && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}
+          {editing ? "Enregistrer le planning" : "Planifier"}
+        </Button>
+      </DialogFooter>
+    </form>
   )
 }

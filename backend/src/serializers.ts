@@ -85,6 +85,7 @@ export function serializeDefense(defense: Defense) {
     endTime: defense.endTime,
     orderIndex: defense.orderIndex,
     location: defense.location ?? null,
+    instructions: defense.instructions ?? null,
   };
 }
 

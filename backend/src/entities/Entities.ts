@@ -434,6 +434,10 @@ export class Defense {
   @Column({ type: 'text', nullable: true })
   location?: string | null;
 
+  /** Ce que les étudiants doivent préparer ; identique pour tous les groupes d'un même planning. */
+  @Column({ type: 'text', nullable: true })
+  instructions?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

@@ -7,6 +7,7 @@ import { toast } from "sonner"
 import { QuietEmpty } from "@/components/dashboard/parts"
 import { MainLayout } from "@/components/layout/main-layout"
 import { PageContainer, PageHeader } from "@/components/layout/page"
+import { StudentDefenseCard } from "@/components/projects/StudentDefenseCard"
 import { DueBadge } from "@/components/shared/DueBadge"
 import { ErrorState } from "@/components/shared/ErrorState"
 import { SectionCard } from "@/components/shared/SectionCard"
@@ -16,7 +17,7 @@ import { Button } from "@/components/ui/button"
 import { useAuth } from "@/contexts/auth-context"
 import { errorMessage } from "@/lib/api"
 import { confirmAction } from "@/lib/dialogs"
-import { formatDateFull, formatDateTime, formatTime, plural } from "@/lib/format"
+import { formatDateFull, formatDateTime, plural } from "@/lib/format"
 import { fullName } from "@/lib/people"
 import {
   defensesOf,
@@ -270,6 +271,8 @@ export function StudentProjectDetailsPageContent({ params }: ProjectDetailsPageP
               )}
             </SectionCard>
 
+            {myGroup && <StudentDefenseCard defenses={defensesOf(project)} groupId={myGroup.id} />}
+
             <SectionCard title="Dates à retenir">
               {dates.length === 0 ? (
                 <QuietEmpty>Aucune date pour l’instant. Les échéances apparaîtront ici dès qu’elles seront fixées.</QuietEmpty>
@@ -349,7 +352,7 @@ interface ProjectDate {
   badge: boolean
 }
 
-/** Dates du projet utiles à l’étudiant : constitution des groupes, livrables (rendu ou non) et sa soutenance. */
+/** Dates du projet utiles à l’étudiant : constitution des groupes et livrables (rendu ou non). La soutenance a sa propre carte. */
 function collectDates(project: Project, myGroup: ProjectGroup | null, groupsOpen: boolean): ProjectDate[] {
   const items: ProjectDate[] = []
   if (project.groupFormationDeadline) {
@@ -373,17 +376,6 @@ function collectDates(project: Project, myGroup: ProjectGroup | null, groupsOpen
       late: submission?.isLate,
       href: myGroup ? projectPath("/my-projects", project.id, "/group") : undefined,
       badge: true,
-    })
-  }
-  const defense = defensesOf(project).find((item) => myGroup && item.group?.id === myGroup.id)
-  if (defense) {
-    items.push({
-      key: "defense",
-      title: "Votre soutenance",
-      when: `${formatDateFull(defense.startTime)} à ${formatTime(defense.startTime)}${defense.location ? ` · ${defense.location}` : ""}`,
-      date: defense.startTime,
-      done: false,
-      badge: new Date(defense.startTime).getTime() > Date.now(),
     })
   }
   return items.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())

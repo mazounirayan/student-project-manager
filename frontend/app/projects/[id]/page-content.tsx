@@ -8,16 +8,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowLeft, Download, Calendar, Eye, EyeOff, FileText, MoreHorizontal, Pencil, Plus, Trash2, Users } from "lucide-react"
+import { ArrowLeft, Eye, EyeOff, FileText, MoreHorizontal, Pencil, Plus, Trash2, Users } from "lucide-react"
 import { useEffect, useMemo, useState, useCallback } from "react"
 import GroupsBoard from "@/components/groups/GroupsBoard"
 import { DeliverableDialog, type DeliverableFormValues } from "@/components/projects/deliverable-dialog"
 import { DeliverablesList } from "@/components/projects/deliverablesList-dialog"
-import { ScheduleDefenseDialog } from "@/components/projects/schedule-defense-dialog"
-import DefenseOrderTable from "@/components/projects/DefenseOrderTable"
+import { DefensesTab } from "@/components/projects/DefensesTab"
 import { ProjectGradingSection } from "@/components/projects/ProjectGradingSection"
 import { DeliverableGradingPanel } from "@/components/grading/DeliverableGradingPanel"
-import { apiPost, apiPut, downloadFile, errorMessage } from "@/lib/api"
+import { apiPost, apiPut, errorMessage } from "@/lib/api"
+import type { DefenseSlot } from "@/lib/defenses"
 import type { Deliverable } from "@/lib/deliverables"
 import { TeacherReportsView } from "@/components/reports/TeacherReportsView"
 import { DefenseGradingPanel } from "@/components/grading/DefenseGradingPanel"
@@ -42,15 +42,6 @@ interface ProjectPageProps {
 
 type Student = { id: number; firstName: string; lastName: string; email: string }
 type Group = { id: number; name: string; capacity: number; members: Student[] }
-type Defense = {
-  id: number
-  group?: { id: number; name: string } | null
-  startTime: string
-  endTime: string
-  orderIndex: number
-  location?: string | null
-}
-
 const TABS = ["overview", "groups", "deliverables", "reports", "defenses", "grading"] as const
 type TabValue = (typeof TABS)[number]
 
@@ -60,7 +51,7 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
   const [editOpen, setEditOpen] = useState(false)
   const [promotions, setPromotions] = useState<Promotion[]>([])
   const [project, setProject] = useState<Project | null>(null)
-  const [defenses, setDefenses] = useState<Defense[]>([])
+  const [defenses, setDefenses] = useState<DefenseSlot[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deliverableDialog, setDeliverableDialog] = useState<{ open: boolean; deliverable: Deliverable | null }>({
@@ -72,6 +63,8 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
   /** Groupe à ouvrir en premier dans la notation (liens « Noter » d’un groupe précis). */
   const [gradingGroup, setGradingGroup] = useState<number | undefined>()
   const [scrollTarget, setScrollTarget] = useState<string | null>(null)
+  /** Change à chaque note enregistrée : l’onglet Soutenances recharge l’état des notes. */
+  const [notesTick, setNotesTick] = useState(0)
 
   const projectId = useRouteProjectId(params.id)
 
@@ -81,7 +74,7 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
     try {
       const data = await getProjectById(projectId)
       setProject(data)
-      setDefenses((data.defenses ?? []) as Defense[])
+      setDefenses((data.defenses ?? []) as DefenseSlot[])
     } catch (err) {
       setError(err instanceof Error ? err.message : "Impossible de charger ce projet.")
     } finally {
@@ -122,6 +115,12 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
     setScrollTarget("notation-livrables")
   }, [])
 
+  const goToDefenseGrading = useCallback((groupId: number) => {
+    setGradingGroup(groupId)
+    setScrollTarget("notation-soutenances")
+    window.history.replaceState(null, "", `#defenses/${groupId}`)
+  }, [])
+
   useEffect(() => {
     if (!scrollTarget || loading) return
     document.getElementById(scrollTarget)?.scrollIntoView({ behavior: "smooth", block: "start" })
@@ -137,7 +136,7 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
     try {
       const data = await getProjectById(projectId)
       setProject(data)
-      setDefenses((data.defenses ?? []) as Defense[])
+      setDefenses((data.defenses ?? []) as DefenseSlot[])
     } catch (err) {
       toast.error(errorMessage(err, "Impossible d’actualiser le projet."))
     }
@@ -159,62 +158,6 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
     },
     [deliverableDialog.deliverable, handleRefresh, projectId],
   )
-
-  const handleDefenseScheduled = useCallback(
-    async (defenseData: Record<string, unknown>) => {
-      try {
-        const data = await apiPost<{ defenses?: Defense[] }>(`/defenses/projects/${projectId}/schedule`, defenseData)
-        toast.success("Soutenances planifiées.")
-        if (data?.defenses) {
-          setDefenses(data.defenses)
-        }
-        await handleRefresh()
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Erreur lors de la planification de la soutenance.")
-      }
-    },
-    [projectId, handleRefresh],
-  )
-
-  const handlePersistOrder = useCallback(
-    async (next: Defense[]) => {
-      if (!Array.isArray(next) || next.some((d) => !d?.group?.id || !Number.isFinite(d.orderIndex))) {
-        toast.error("Ordre de passage invalide.")
-        return
-      }
-
-      const payload = {
-        newOrder: next.map((d) => ({ groupId: Number(d.group!.id), orderIndex: Number(d.orderIndex) })),
-      }
-
-      try {
-        const data = await apiPut<{ defenses: Defense[] }>(`/defenses/projects/${projectId}/reorder`, payload)
-        toast.success("Ordre de passage enregistré.")
-        if (data?.defenses) {
-          setDefenses(data.defenses)
-        }
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Impossible de sauvegarder l’ordre.")
-      }
-    },
-    [projectId],
-  )
-
-  const handleDownloadSchedule = useCallback(async () => {
-    try {
-      await downloadFile(`/defenses/projects/${projectId}/schedule/pdf`, "planning-soutenances.pdf")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Le téléchargement du planning n’est pas disponible.")
-    }
-  }, [projectId])
-
-  const handleDownloadAttendanceSheet = useCallback(async () => {
-    try {
-      await downloadFile(`/defenses/projects/${projectId}/attendance/pdf`, "emargement-soutenances.pdf")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Le téléchargement de la fiche d’émargement n’est pas disponible.")
-    }
-  }, [projectId])
 
   const students: Student[] = useMemo(() => (project ? studentsOf(project) : []), [project])
 
@@ -373,36 +316,23 @@ export function ProjectPageContent({ params }: ProjectPageProps) {
           </TabsContent>
 
           <TabsContent value="defenses">
-            <Card>
-              <CardHeader>
-                <CardTitle>Ordre de passage</CardTitle>
-                <CardDescription>Planifiez les soutenances et réorganisez l’ordre des groupes.</CardDescription>
-                <div className="mt-4 flex flex-wrap gap-2 border-t pt-4">
-                  <ScheduleDefenseDialog
-                    onDefenseScheduled={handleDefenseScheduled}
-                    groupCount={groups?.length}
-                  />
-                  <Button size="sm" onClick={handleDownloadSchedule}>
-                    <Calendar aria-hidden="true" className="mr-2 h-4 w-4" />
-                    Télécharger le planning
-                  </Button>
-                  <Button size="sm" onClick={handleDownloadAttendanceSheet}>
-                    <Download aria-hidden="true" className="mr-2 h-4 w-4" />
-                    Télécharger la fiche d’émargement
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <DefenseOrderTable defenses={defenses} onOrderChange={handlePersistOrder} />
-              </CardContent>
-            </Card>
+            <DefensesTab
+              projectId={Number(project.id)}
+              visible={visible}
+              groups={groups}
+              defenses={defenses}
+              onChange={setDefenses}
+              onGrade={goToDefenseGrading}
+              onOpenGroups={() => changeTab("groups")}
+              notesKey={notesTick}
+            />
             <Card id="notation-soutenances" className="mt-6 scroll-mt-6">
               <CardHeader>
                 <CardTitle>Notation des soutenances</CardTitle>
                 <CardDescription>Notez chaque groupe pendant ou juste après son passage. Enregistrez un brouillon, puis validez la note.</CardDescription>
               </CardHeader>
               <CardContent>
-                <DefenseGradingPanel projectId={project.id} groups={groups} defenses={defenses} initialGroupId={gradingGroup} />
+                <DefenseGradingPanel projectId={project.id} groups={groups} defenses={defenses} initialGroupId={gradingGroup} onChanged={() => setNotesTick((tick) => tick + 1)} />
               </CardContent>
             </Card>
           </TabsContent>

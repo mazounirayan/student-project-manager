@@ -1,5 +1,6 @@
 /** Règles et lectures communes aux pages de projet (enseignante et étudiant) : groupes, dates, étapes restantes. */
 import { confirmAction } from "@/lib/dialogs"
+import type { DefenseSlot } from "@/lib/defenses"
 import { plural } from "@/lib/format"
 import type { Project } from "@/services/project.service"
 
@@ -23,12 +24,7 @@ export interface ProjectDeliverable {
   submissions?: { groupId?: number | null; isLate?: boolean }[]
 }
 
-export interface ProjectDefense {
-  id: number
-  startTime: string
-  location?: string | null
-  group?: { id: number } | null
-}
+export type ProjectDefense = DefenseSlot
 
 /** Taille maximale d’un groupe quand le projet n’en fixe pas. */
 export const DEFAULT_MAX_GROUP_SIZE = 4

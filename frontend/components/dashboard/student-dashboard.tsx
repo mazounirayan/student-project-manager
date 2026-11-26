@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
 import { DashboardSkeleton, QuietEmpty, RowLink, useOverview } from "@/components/dashboard/parts"
+import { DefenseWhenBadge } from "@/components/projects/StudentDefenseCard"
+import { positionLabel } from "@/lib/defenses"
 import { loadStudentOverview, type StudentOverview, type StudentTask } from "@/lib/dashboard"
 import { formatDate, formatDateFull, formatDateTime, formatNumber, gridTypeLabel } from "@/lib/format"
 
@@ -162,11 +164,15 @@ function Overview({ data }: { data: StudentOverview }) {
               href={data.defense.href}
               className="-m-2 block rounded-md p-2 outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring"
             >
-              <span className="block text-sm font-medium">{formatDateTime(data.defense.startTime)}</span>
+              <span className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium">{formatDateTime(data.defense.startTime)}</span>
+                <DefenseWhenBadge startTime={data.defense.startTime} status={new Date(data.defense.startTime).getTime() <= Date.now() ? "live" : "upcoming"} />
+              </span>
               <span className="block text-xs text-muted-foreground">
-                {data.defense.groupName} · {data.defense.projectName}
+                {positionLabel(data.defense.position, data.defense.total)} · {data.defense.groupName} · {data.defense.projectName}
                 {data.defense.location ? ` · ${data.defense.location}` : ""}
               </span>
+              {data.defense.hasInstructions && <span className="block text-xs text-muted-foreground">Consignes de préparation à lire.</span>}
             </Link>
           ) : (
             <QuietEmpty>Aucune soutenance planifiée pour votre groupe.</QuietEmpty>

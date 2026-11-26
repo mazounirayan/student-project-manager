@@ -4,7 +4,7 @@
  */
 import { DEMO_ACCOUNTS } from "./mode"
 import { loadDemoDb, nextId, persist } from "./store"
-import { serializeSession, serializeGrid, serializeGroup, serializeProjectDetail, serializeProjectSummary, serializeReport, serializeSubmission, serializeUser } from "./serialize"
+import { serializeSession, serializeGrid, serializeGroup, serializeDefense, serializeProjectDetail, serializeProjectSummary, serializeReport, serializeSubmission, serializeUser } from "./serialize"
 import { parseCsv, parseJson } from "../student-import"
 import type { DemoCriterion, DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoPromotion, DemoReport, DemoSession, DemoUser } from "./types"
 
@@ -1006,30 +1006,49 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       const owner = requireTeacher(db, init, headers)
       assertOwnsProject(db, owner, Number(m![1]))
       const projectId = Number(m![1])
-      const groups = db.groups.filter((g) => g.projectId === projectId)
-      if (groups.length === 0) return fail(400, "Créez d’abord des groupes pour planifier les soutenances.")
+      const groups = db.groups.filter((g) => g.projectId === projectId && g.memberIds.length > 0).sort((a, b) => a.id - b.id)
+      if (groups.length === 0) return fail(400, "Constituez d’abord des groupes d’étudiants pour planifier les soutenances.")
       const start = new Date(body.startDateTime)
       if (Number.isNaN(start.getTime())) return fail(400, "Date de début invalide.")
-      const location = String(body.location ?? "Salle à définir")
       const durationMinutes = Number(body.durationPerGroup) ||
         (body.endDateTime ? Math.max(10, Math.floor((new Date(body.endDateTime).getTime() - start.getTime()) / 60_000 / groups.length)) : 30)
+      const pauseMinutes = body.breakMinutes === undefined || body.breakMinutes === null ? 5 : Number(body.breakMinutes)
+      if (!(pauseMinutes >= 0 && pauseMinutes <= 120)) return fail(400, "Pause invalide (0 à 120 minutes).")
 
-      db.defenses = db.defenses.filter((d) => d.projectId !== projectId)
-      groups.forEach((group, i) => {
-        const slotStart = new Date(start.getTime() + i * (durationMinutes + 5) * 60_000)
+      // Comme l’API : on garde les soutenances commencées, l’ordre actuel et les consignes ; les nouveaux groupes passent à la fin.
+      const now = Date.now()
+      const existing = db.defenses.filter((d) => d.projectId === projectId).sort((a, b) => a.orderIndex - b.orderIndex)
+      const finished = existing.filter((d) => new Date(d.startTime).getTime() <= now)
+      const upcoming = existing.filter((d) => !finished.includes(d))
+      const finishedGroups = new Set(finished.map((d) => d.groupId))
+      const position = new Map(upcoming.map((d, index) => [d.groupId, index]))
+      const toSchedule = groups
+        .filter((g) => !finishedGroups.has(g.id))
+        .sort((a, b) => (position.get(a.id) ?? Infinity) - (position.get(b.id) ?? Infinity) || a.id - b.id)
+      if (toSchedule.length === 0) return fail(400, "Toutes les soutenances ont déjà commencé ou eu lieu : il n’y a plus rien à planifier.")
+      const instructions =
+        body.instructions === undefined ? (existing.find((d) => d.instructions)?.instructions ?? null) : String(body.instructions ?? "").trim() || null
+
+      db.defenses = db.defenses.filter((d) => d.projectId !== projectId || finished.includes(d))
+      toSchedule.forEach((group, i) => {
+        const slotStart = new Date(start.getTime() + i * (durationMinutes + pauseMinutes) * 60_000)
         db.defenses.push({
           id: nextId(db),
           projectId,
           groupId: group.id,
           startTime: slotStart.toISOString(),
           endTime: new Date(slotStart.getTime() + durationMinutes * 60_000).toISOString(),
-          orderIndex: i + 1,
-          location,
+          orderIndex: finished.length + i + 1,
+          location: body.location ? String(body.location) : null,
+          instructions,
         })
       })
+      const defenses = db.defenses
+        .filter((d) => d.projectId === projectId)
+        .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+      defenses.forEach((d, i) => (d.orderIndex = i + 1))
       persist()
-      const defenses = db.defenses.filter((d) => d.projectId === projectId).sort((a, b) => a.orderIndex - b.orderIndex)
-      return json({ message: "Soutenances planifiées (démo).", defenses }, 201)
+      return json({ message: "Soutenances planifiées", defenses: defenses.map((d) => serializeDefense(db, d)) }, 201)
     }
     m = /^\/defenses\/projects\/(\d+)\/reorder$/.exec(route)
     if (m && method === "PUT") {
@@ -1037,13 +1056,22 @@ export async function handleDemoRequest(method: string, url: string, init?: Requ
       assertOwnsProject(db, owner, Number(m![1]))
       const projectId = Number(m![1])
       const newOrder: Array<{ groupId: number; orderIndex: number }> = body.newOrder ?? []
-      for (const item of newOrder) {
-        const defense = db.defenses.find((d) => d.projectId === projectId && d.groupId === Number(item.groupId))
-        if (defense) defense.orderIndex = Number(item.orderIndex)
+      const current = db.defenses
+        .filter((d) => d.projectId === projectId)
+        .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime() || a.orderIndex - b.orderIndex)
+      if (current.length === 0) return fail(400, "Aucune soutenance n’est planifiée.")
+      // Comme l’API : chaque groupe prend l’horaire de sa nouvelle place ; une soutenance commencée ou passée reste à la sienne.
+      const requested = new Map(newOrder.map((item) => [Number(item.groupId), Number(item.orderIndex)]))
+      const wanted = (d: (typeof current)[number]) => requested.get(d.groupId) ?? current.indexOf(d) + 1
+      const next = [...current].sort((a, b) => wanted(a) - wanted(b) || current.indexOf(a) - current.indexOf(b))
+      const now = Date.now()
+      if (current.some((d, i) => new Date(d.startTime).getTime() <= now && next[i] !== d)) {
+        return fail(400, "Une soutenance commencée ou passée ne peut plus être déplacée.")
       }
+      const slots = current.map(({ startTime, endTime }) => ({ startTime, endTime }))
+      next.forEach((d, i) => Object.assign(d, slots[i], { orderIndex: i + 1 }))
       persist()
-      const defenses = db.defenses.filter((d) => d.projectId === projectId).sort((a, b) => a.orderIndex - b.orderIndex)
-      return json({ defenses })
+      return json({ defenses: next.map((d) => serializeDefense(db, d)) })
     }
     m = /^\/defenses\/projects\/(\d+)\/(schedule\/pdf|attendance\/pdf)$/.exec(route)
     if (m && method === "GET") {

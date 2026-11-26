@@ -21,7 +21,8 @@ import { EmptyState } from "@/components/shared/EmptyState"
 import { DetailSkeleton } from "@/components/shared/Skeletons"
 import { QuietEmpty } from "@/components/dashboard/parts"
 import type { Deliverable } from "@/lib/deliverables"
-import { studentGroupState, type ProjectGroup } from "@/lib/projects"
+import { StudentDefenseBanner } from "@/components/projects/StudentDefenseCard"
+import { defensesOf, studentGroupState, type ProjectGroup } from "@/lib/projects"
 
 interface GroupDetailsPageProps {
   params: { id: string }
@@ -116,8 +117,9 @@ export function GroupDetailsPageContent({ params }: GroupDetailsPageProps) {
           />
         ) : (
           <>
-            <div className="mb-6">
+            <div className="mb-6 space-y-4">
               <GroupMembers group={group} />
+              <StudentDefenseBanner defenses={defensesOf(project)} groupId={group.id} href={`${projectPath("/my-projects", projectId)}`} />
             </div>
 
             <Tabs value={tab} onValueChange={changeTab} className="space-y-4">

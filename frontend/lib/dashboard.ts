@@ -36,6 +36,7 @@ interface Defense {
   startTime: string
   endTime: string
   location?: string | null
+  instructions?: string | null
 }
 interface Grid {
   id: number
@@ -278,7 +279,13 @@ export interface StudentDefense {
   projectName: string
   groupName: string
   startTime: string
+  endTime: string
   location: string | null
+  /** « 2e sur 3 » : place du groupe dans l’ordre de passage. */
+  position: number
+  total: number
+  /** Des consignes de préparation sont à lire sur la page du projet. */
+  hasInstructions: boolean
   href: string
 }
 
@@ -340,15 +347,18 @@ export function buildStudentOverview(
       })
     }
 
-    const next = project.defenses
-      .filter((d) => d.groupId === group.id && new Date(d.endTime).getTime() > now)
-      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())[0]
+    const ordered = [...project.defenses].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+    const next = ordered.find((d) => d.groupId === group.id && new Date(d.endTime).getTime() > now)
     if (next && (!defense || new Date(next.startTime) < new Date(defense.startTime))) {
       defense = {
         projectName: project.name,
         groupName: group.name,
         startTime: next.startTime,
+        endTime: next.endTime,
         location: next.location ?? null,
+        position: ordered.indexOf(next) + 1,
+        total: ordered.length,
+        hasInstructions: Boolean(next.instructions),
         href: projectPath("/my-projects", project.id),
       }
     }

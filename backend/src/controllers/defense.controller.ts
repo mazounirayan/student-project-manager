@@ -7,9 +7,9 @@ export class DefenseController {
   private defenseService = new DefenseService();
 
   schedule = async (req: Request, res: Response) => {
-    const { startDateTime, endDateTime, durationPerGroup, location } = req.body;
+    const { startDateTime, endDateTime, durationPerGroup, breakMinutes, location, instructions } = req.body;
     const result = await this.defenseService.schedule(parseId(req.params.projectId), currentUser(req).id, {
-      startDateTime, endDateTime, durationPerGroup, location,
+      startDateTime, endDateTime, durationPerGroup, breakMinutes, location, instructions,
     });
     res.status(201).json(result);
   };

@@ -11,7 +11,7 @@ function iso(offsetMs: number): string {
 
 /**
  * Base de démonstration fictive : une promotion, deux projets, trois groupes,
- * des livrables rendus / en retard / à rendre, une soutenance planifiée et des notes.
+ * des livrables rendus / en retard / à rendre, un planning de soutenances du jour et des notes.
  * Toutes les dates sont relatives au chargement pour rester cohérentes.
  */
 export function buildDemoDb(): DemoDb {
@@ -262,18 +262,25 @@ export function buildDemoDb(): DemoDb {
     },
   ]
 
-  const defenseStart = new Date(now + 14 * DAY)
-  defenseStart.setHours(9, 0, 0, 0)
-  const defenses = [g1, g2, g3].map((group, i) => {
-    const start = new Date(defenseStart.getTime() + i * 35 * 60 * 1000)
+  // Planning du jour, calé sur le chargement : le Groupe 2 est passé (sa note est en brouillon),
+  // le Groupe 3 est en train de passer, le Groupe 1 (celui d’Alex) passe ensuite.
+  const MINUTE = 60_000
+  const defenseNow = Math.round(now / (5 * MINUTE)) * 5 * MINUTE
+  const defenseStart = defenseNow - 45 * MINUTE
+  const defenseDuration = 30
+  const defensePause = 10
+  const defenses = [g2, g3, g1].map((group, i) => {
+    const start = new Date(defenseStart + i * (defenseDuration + defensePause) * MINUTE)
     return {
       id: i + 1,
       projectId: p1.id,
       groupId: group.id,
       startTime: start.toISOString(),
-      endTime: new Date(start.getTime() + 30 * 60 * 1000).toISOString(),
+      endTime: new Date(start.getTime() + defenseDuration * MINUTE).toISOString(),
       orderIndex: i + 1,
       location: "Amphi B — Campus Nord",
+      instructions:
+        "Présentation de 20 minutes, puis 10 minutes de questions. Chaque membre du groupe prend la parole. Préparez une démonstration en direct et envoyez vos diapositives à Camille Fabre avant votre passage.",
     }
   })
 
@@ -354,7 +361,7 @@ export function buildDemoDb(): DemoDb {
     submittedAt: iso(-2 * DAY),
     validatedAt: iso(-2 * DAY),
   }
-  // Soutenance du Groupe 2 : brouillon commencé.
+  // Soutenance du Groupe 2 : passé il y a un instant, note commencée et pas encore validée.
   const sessionG2Soutenance = {
     id: 2,
     gridId: gridSoutenance.id,
@@ -367,7 +374,7 @@ export function buildDemoDb(): DemoDb {
     totalScore: 11,
     status: "draft" as const,
     gradedBy: teacher.id,
-    gradedAt: iso(-1 * DAY),
+    gradedAt: new Date(defenseNow - 10 * MINUTE).toISOString(),
   }
 
   return {

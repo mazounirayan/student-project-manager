@@ -2,7 +2,7 @@
  * Sérialisation : transforme les lignes de la base de démo en réponses JSON
  * calquées sur les formes attendues par le frontend (mêmes champs que l’API).
  */
-import type { DemoDb, DemoDeliverable, DemoGroup, DemoProject, DemoReport, DemoSubmission, DemoUser } from "./types"
+import type { DemoDb, DemoDefense, DemoDeliverable, DemoGroup, DemoProject, DemoReport, DemoSubmission, DemoUser } from "./types"
 
 export function serializeUser(db: DemoDb, idOrUser: number | DemoUser): Record<string, unknown> {
   const user = typeof idOrUser === "number" ? db.users.find((u) => u.id === idOrUser) : idOrUser
@@ -144,6 +144,21 @@ export function serializeReport(db: DemoDb, report: DemoReport): Record<string, 
  * Détail complet d’un projet, relations incluses. Pour un étudiant, les rendus et
  * rapports des autres groupes sont exclus.
  */
+export function serializeDefense(db: DemoDb, defense: DemoDefense): Record<string, unknown> {
+  const group = db.groups.find((g) => g.id === defense.groupId)
+  return {
+    id: defense.id,
+    projectId: defense.projectId,
+    groupId: defense.groupId,
+    group: group ? { id: group.id, name: group.name } : null,
+    startTime: defense.startTime,
+    endTime: defense.endTime,
+    orderIndex: defense.orderIndex,
+    location: defense.location ?? null,
+    instructions: defense.instructions ?? null,
+  }
+}
+
 export function serializeProjectDetail(db: DemoDb, project: DemoProject, viewer: DemoUser): Record<string, unknown> {
   const ownGroupIds =
     viewer.role === "student"
@@ -180,18 +195,7 @@ export function serializeProjectDetail(db: DemoDb, project: DemoProject, viewer:
     groups: groups.map((g) => serializeGroup(db, g)),
     deliverables: deliverables.map((d) => serializeDeliverable(db, d, ownGroupIds)),
     reports: reports.map((r) => serializeReport(db, r)),
-    defenses: defenses.map((d) => ({
-      id: d.id,
-      projectId: d.projectId,
-      groupId: d.groupId,
-      group: db.groups.find((g) => g.id === d.groupId)
-        ? { id: d.groupId, name: db.groups.find((g) => g.id === d.groupId)?.name }
-        : null,
-      startTime: d.startTime,
-      endTime: d.endTime,
-      orderIndex: d.orderIndex,
-      location: d.location,
-    })),
+    defenses: defenses.map((d) => serializeDefense(db, d)),
     gradingGrids: grids.map((g) => serializeGrid(db, g)),
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,

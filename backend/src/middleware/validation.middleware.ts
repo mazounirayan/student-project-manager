@@ -131,7 +131,9 @@ export const validateDefenseSchedule = [
   body('startDateTime').isISO8601().withMessage('Date de début invalide'),
   body('endDateTime').optional({ values: 'null' }).isISO8601().withMessage('Date de fin invalide'),
   body('durationPerGroup').optional({ values: 'null' }).isInt({ min: 5, max: 480 }).withMessage('Durée par groupe invalide (5 à 480 minutes)'),
+  body('breakMinutes').optional({ values: 'null' }).isInt({ min: 0, max: 120 }).withMessage('Pause invalide (0 à 120 minutes)'),
   optionalText('location', 'Lieu'),
+  body('instructions').optional({ values: 'null' }).isString().isLength({ max: 2000 }).withMessage('Consignes invalides (2 000 caractères au plus)'),
   handleValidationErrors,
 ];
 

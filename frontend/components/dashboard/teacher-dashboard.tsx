@@ -133,7 +133,7 @@ function Overview({ data }: { data: TeacherOverview }) {
             ) : (
               <ul className="divide-y">
                 {data.defensePlans.map((plan) => (
-                  <RowLink key={plan.projectId} href={projectPath("/projects", plan.projectId)}>
+                  <RowLink key={plan.projectId} href={`${projectPath("/projects", plan.projectId)}#defenses`}>
                     <span className="block text-sm font-medium">{plan.projectName}</span>
                     <span className="block text-xs text-muted-foreground">
                       {formatDateTime(plan.firstStart)}

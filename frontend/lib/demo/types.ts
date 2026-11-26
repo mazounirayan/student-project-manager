@@ -129,7 +129,9 @@ export interface DemoDefense {
   startTime: string
   endTime: string
   orderIndex: number
-  location: string
+  location: string | null
+  /** Ce que les étudiants doivent préparer (même texte pour tous les groupes du planning). */
+  instructions?: string | null
 }
 
 export interface DemoCriterion {
